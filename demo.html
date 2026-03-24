@@ -101,11 +101,15 @@ body { font-family:'Reggae One',system-ui,sans-serif; }
   box-shadow:0 8px 40px rgba(0,0,0,.10);
   display:flex; flex-direction:column; align-items:center; gap:1.1rem;
 }
-#overlay-instructions {
+#overlay-title {
   font-family:'Reggae One',system-ui,sans-serif;
-  font-size:clamp(.82rem,2.2vw,.98rem);
-  color:#444; line-height:2;
-  text-align:center; list-style:none;
+  font-size:clamp(2rem,6vw,2.8rem);
+  color:#1a1510; letter-spacing:.04em; text-align:center;
+}
+#overlay-story {
+  font-family:'Reggae One',system-ui,sans-serif;
+  font-size:clamp(.78rem,2vw,.9rem);
+  color:#666; line-height:1.65; text-align:center;
 }
 #overlay-inp {
   width:100%;
@@ -122,13 +126,9 @@ body { font-family:'Reggae One',system-ui,sans-serif; }
 <body>
 <div id="overlay">
   <div id="overlay-card">
-    <ul id="overlay-instructions">
-      <li>Type a word or sentence and press Enter</li>
-      <li>Drag words or letters to move them</li>
-      <li>Use the mouse wheel to zoom</li>
-      <li>Try different arrangements</li>
-    </ul>
-    <input id="overlay-inp" type="text" placeholder="Type something…" autocomplete="off" autofocus>
+    <div id="overlay-title">VBerg</div>
+    <div id="overlay-story">I created VBerg to make words easier to remember through place, structure, and visual memory.</div>
+    <input id="overlay-inp" type="text" placeholder="Type a word or sentence..." autocomplete="off" autofocus>
   </div>
 </div>
 <div style="position:relative;line-height:0;">
@@ -1866,10 +1866,12 @@ document.getElementById('practiceInp').addEventListener('keydown',function(e){
 });
 
 /* ── Overlay logic ── */
+var EXAMPLES=['I like learning new words','This sentence is easy to remember','Words become clearer with structure','I can move words across the hill','Language becomes easier with practice','This tool helps me explore sentences','I remember words through visual structure','Learning feels easier when I can see it','This sentence can be split into parts','I can rebuild the sentence in different ways'];
+function randEx(){return EXAMPLES[Math.floor(Math.random()*EXAMPLES.length)];}
 (function(){
   var overlay=document.getElementById('overlay');
   var oi=document.getElementById('overlay-inp');
-  var DEFAULT='Det jag gillar mest är';
+  var DEFAULT=randEx();
   function dismiss(){
     var text=oi.value.trim()||DEFAULT;
     var inp=document.getElementById('inp');
@@ -1892,7 +1894,7 @@ window.addEventListener('resize',function(){clearTimeout(_rt);_rt=setTimeout(fun
 document.fonts.ready.then(function(){
   randomHP();
   var urlText=new URLSearchParams(window.location.search).get('text');
-  var raw=urlText?urlText:'Det jag gillar mest är';
+  var raw=urlText?urlText:EXAMPLES[Math.floor(Math.random()*EXAMPLES.length)];
   document.getElementById('inp').value=raw;
   var sent=document.getElementById('sentOut');
   if(sent) sent.textContent=raw;
