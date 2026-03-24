@@ -1821,7 +1821,8 @@ var _rt;
 window.addEventListener('resize',function(){clearTimeout(_rt);_rt=setTimeout(function(){if(state.words.length)render();},120);});
 document.fonts.ready.then(function(){
   randomHP();
-  var raw='Det jag gillar mest är';
+  var urlText=new URLSearchParams(window.location.search).get('text');
+  var raw=urlText?urlText:'Det jag gillar mest är';
   document.getElementById('inp').value=raw;
   var sent=document.getElementById('sentOut');
   if(sent) sent.textContent=raw;
@@ -1829,7 +1830,7 @@ document.fonts.ready.then(function(){
   state.G=Math.min(state.G,parts.length);
   state.charMode=false;
   state.words=parts;state.splits=buildSplits(parts.length,state.G);
-  setTimeout(render,250);
+  setTimeout(function(){render();if(urlText)go();},250);
 });
 </script>
 </body>
