@@ -81,6 +81,20 @@ body { font-family:'Reggae One',system-ui,sans-serif; }
 #btnPractice.show { display:inline-block; }
 #btnPractice:hover { opacity:.75; }
 
+/* ── Mobile portrait lock ── */
+#rotate-msg {
+  display:none;
+  position:fixed; inset:0; z-index:9999;
+  background:#111; color:#fff;
+  font-family:'Reggae One',system-ui,sans-serif;
+  font-size:1.2rem; text-align:center;
+  align-items:center; justify-content:center;
+}
+@media (hover:none) and (pointer:coarse) and (orientation:portrait) {
+  #rotate-msg { display:flex; }
+  body > *:not(#rotate-msg) { visibility:hidden; }
+}
+
 /* ── Overlay intro ── */
 #overlay {
   position:fixed; inset:0; z-index:1000;
@@ -124,6 +138,7 @@ body { font-family:'Reggae One',system-ui,sans-serif; }
 </style>
 </head>
 <body>
+<div id="rotate-msg">Rotate your device</div>
 <div id="overlay">
   <div id="overlay-card">
     <div id="overlay-title">VBerg</div>
