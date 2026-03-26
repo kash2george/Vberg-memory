@@ -105,6 +105,7 @@ body { font-family:'Reggae One',system-ui,sans-serif; }
   backdrop-filter:blur(14px) brightness(.96);
   -webkit-backdrop-filter:blur(14px) brightness(.96);
   transition:opacity .45s ease;
+  overflow-y:auto;
 }
 #overlay.hide { opacity:0; pointer-events:none; }
 #overlay-card {
@@ -1903,6 +1904,20 @@ function randEx(){return EXAMPLES[Math.floor(Math.random()*EXAMPLES.length)];}
     overlay.style.display='none';
   }
 })();
+
+/* ── Mobile keyboard: keep overlay inside visual viewport ── */
+if(window.visualViewport && 'ontouchstart' in window){
+  function _syncOverlay(){
+    var vv=window.visualViewport;
+    var el=document.getElementById('overlay');
+    if(!el||el.style.display==='none'||el.classList.contains('hide'))return;
+    el.style.top=vv.offsetTop+'px';
+    el.style.height=vv.height+'px';
+    el.style.bottom='auto';
+  }
+  window.visualViewport.addEventListener('resize',_syncOverlay);
+  window.visualViewport.addEventListener('scroll',_syncOverlay);
+}
 
 var _rt;
 window.addEventListener('resize',function(){clearTimeout(_rt);_rt=setTimeout(function(){if(state.words.length)render();},120);});
