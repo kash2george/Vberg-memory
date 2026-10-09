@@ -1,3 +1,5 @@
+This is VBerg v1. v2 design lives in docs/
+
 # VBerg
 
 A visual way to remember words and sentences.
