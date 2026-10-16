@@ -2,17 +2,18 @@
 
 ## Required workflow
 
-- read docs/vberg-log.md first
+- read the Linear documents Log, AI Roles and Spec (project VBerg) first; they are the source of truth
+- Branch from test, PR into test, never push to main. Only George merges. main = live site.
 - plan before any change, wait for OK
 - one commit per task
-- write a log entry at the end
+- post a proposed Log entry on the task's Linear issue at the end; Claude adds it to the Linear Log
 
 ## 10. Rules that must never be broken
 
 1. No coordinate in the data.
 2. Layout never reorders.
 3. Nothing above the measurement boundary reads a font metric.
-4. No randomness in geometry.
+4. No randomness in order or grouping. The memorisation site's hill shape may vary a little (Spec §13.5); programs used for navigation use a fixed seed for stable places.
 5. Only commands write data.
 6. Aggregates cover contiguous ranges.
 7. Anchors never move for labels.

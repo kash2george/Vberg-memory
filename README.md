@@ -1,4 +1,4 @@
-This is VBerg v1. v2 design lives in docs/
+This is VBerg v1. Spec, Log and AI Roles live in Linear (project VBerg).
 
 # VBerg
 
