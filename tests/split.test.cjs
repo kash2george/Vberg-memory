@@ -28,12 +28,13 @@ function app(){
   return c;
 }
 
-test('acceptance list stays together; user regroup takes precedence over redraw', ()=>{
+test('equality wins over list preservation; manual regroup still overrides filters', ()=>{
   const c=app();c.submit(acceptance);
-  assert(c.groups().includes('identify analyze and evaluate'));
+  assert.deepEqual(c.groups(),['Risk management helps','organizations identify analyze','and evaluate threats']);
   const before=JSON.stringify(c.state.splits);
-  c.tryMove(4,1); // Deliberately split the suggested list by moving its edge.
+  c.tryMove(2,1);c.tryMove(1,1); // Two edge moves deliberately create a singleton.
   assert.notEqual(JSON.stringify(c.state.splits),before);
+  assert.equal(c.groups()[0],'Risk');
   const manual=JSON.stringify(c.state.splits);
   c.doBtn('dark');c.doBtn('color');
   assert.equal(JSON.stringify(c.state.splits),manual);
@@ -51,11 +52,20 @@ test('Swedish clause starts are cheap, coordinated och list stays together', ()=
   assert.equal(c.sentenceCutCosts('Vi planerar och vi lär'.split(' '))[2],0);
 });
 
-test('comma lists with and without a conjunction resist internal cuts', ()=>{
+test('punctuation pauses are cheap; detected lists retain cost 8 but yield to equality', ()=>{
   const c=app();
+  for(const mark of [',',';',':','.','!','?']){
+    assert.equal(c.sentenceCutCosts(['We','pause'+mark,'then','continue'])[2],0);
+  }
+  assert.equal(c.sentenceCutCosts(['We','pause','then','continue'])[2],1);
   for(const phrase of ['identify, analyze, and evaluate', 'identify, analyze, evaluate']){
-    c.submit('We '+phrase+' risks before taking action');
-    assert(c.groups().some(g=>g.includes(phrase)));
+    const words=('We '+phrase+' risks before taking action').split(' ');
+    const costs=c.sentenceCutCosts(words);
+    assert.equal(costs[2],8); // Comma-list protection overrides the punctuation pause.
+    assert.equal(costs[3],8);
+    c.submit(words.join(' '));
+    assert(c.groups().every(g=>g.split(' ').length>=2));
+    assert.equal(c.groups().join(' '),words.join(' '));
   }
 });
 
@@ -75,30 +85,87 @@ test('Groups fixes G, cycles 3/4/5, and submit returns to automatic choice', ()=
 
 function boundaries(chunks){let p=0;return Array.from(chunks.slice(0,-1),g=>p+=g.length);}
 
-test('automatic and fixed-G sentence results minimize the specified score', ()=>{
+test('automatic and fixed G minimize the score within filters, or all candidates if none pass', ()=>{
   const c=app();
-  for(const text of [acceptance,swedish]){
+  const samples=[acceptance,swedish,
+    'Browser checks passed, including Swedish and short inputs.',
+    'Identify, classify, assess, treat and monitor risks in the organisation',
+    'Monday Tuesday Wednesday Thursday Friday Saturday Sunday',
+    'Vi granskar resultaten, förklarar riskerna och följer planen som fungerar',
+    ...Array.from({length:14},(_,i)=>Array.from({length:i+2},(_,j)=>'item'+j).join(' '))];
+  for(const text of samples){
     const words=text.split(' '), costs=c.sentenceCutCosts(words);
-    function score(cuts){
+    function candidate(cuts){
       const edges=[0,...cuts,words.length], sizes=edges.slice(1).map((x,i)=>x-edges[i]);
       const mean=words.length/sizes.length;
-      return Math.sqrt(sizes.reduce((s,n)=>s+(n-mean)**2,0)/sizes.length) +
-        1.5*Math.abs(sizes[0]-sizes.at(-1)) + cuts.reduce((s,i)=>s+costs[i],0) + .15*(sizes.length-3);
+      const edge=(sizes[0]+sizes.at(-1))/2;
+      const middle=sizes.slice(1,-1);
+      const score=Math.sqrt(sizes.reduce((s,n)=>s+(n-mean)**2,0)/sizes.length) +
+        1.5*Math.abs(sizes[0]-sizes.at(-1)) + cuts.reduce((s,i)=>s+costs[i],0) + .15*(sizes.length-3) +
+        middle.reduce((s,n)=>s+1.5*(n<edge?edge-n:Math.max(0,n-edge-1)),0) +
+        (words.length>=6?2*sizes.filter(n=>n===1).length:0);
+      const allowed=(words.length<6||sizes.every(n=>n>1)) && middle.every(n=>n<=edge+2);
+      return {score,allowed};
     }
-    const minima={3:Infinity,4:Infinity,5:Infinity};
+    const minima={}, allowedMinima={};
+    const minG=Math.min(3,words.length), maxG=Math.min(5,words.length);
+    for(let G=minG;G<=maxG;G++){minima[G]=Infinity;allowedMinima[G]=Infinity;}
     // Independent enumeration via boundary bit masks, rather than the production recursion.
     for(let mask=0;mask<2**(words.length-1);mask++){
       const cuts=[];
       for(let i=1;i<words.length;i++)if(mask & (1<<(i-1)))cuts.push(i);
       const G=cuts.length+1;
-      if(G>=3&&G<=5)minima[G]=Math.min(minima[G],score(cuts));
+      if(G>=minG&&G<=maxG){
+        const {score,allowed}=candidate(cuts);
+        minima[G]=Math.min(minima[G],score);
+        if(allowed)allowedMinima[G]=Math.min(allowedMinima[G],score);
+      }
     }
     for(const G of [3,4,5,undefined]){
       const result=c.split(words,true,G);
-      const best=G?minima[G]:Math.min(...Object.values(minima));
-      assert(Math.abs(score(boundaries(result.chunks))-best)<1e-10);
+      const selectedG=G?Math.min(G,words.length):undefined;
+      const filtered=G?allowedMinima[selectedG]:Math.min(...Object.values(allowedMinima));
+      const best=Number.isFinite(filtered)?filtered:(G?minima[selectedG]:Math.min(...Object.values(minima)));
+      const actual=candidate(boundaries(result.chunks));
+      assert(Math.abs(actual.score-best)<1e-10,`${text}, G=${G}`);
+      if(Number.isFinite(filtered))assert(actual.allowed);
+      if(selectedG)assert.equal(result.G,selectedG);
+      else assert(result.G>=minG && result.G<=maxG);
+      assert.equal(result.chunks.length,result.G);
+      assert(result.chunks.every(g=>g.length>0));
+      assert.deepEqual(Array.from(result.chunks.flat()),words);
     }
   }
+});
+
+test('filters reject oversized middles and singleton lines, and fixed G=5 still returns six words', ()=>{
+  const c=app();
+  function groups(sizes){return sizes.map(n=>Array(n).fill('word'));}
+  assert.equal(c.sentenceGroupsAllowed(groups([1,6,1]),8),false);
+  assert.equal(c.sentenceGroupsAllowed(groups([2,5,2]),9),false);
+  assert.equal(c.sentenceGroupsAllowed(groups([2,4,2]),8),true);
+  assert.equal(c.sentenceGroupsAllowed(groups([1,2,1]),4),true);
+  const words='one two three four five six'.split(' ');
+  const result=c.split(words,true,5);
+  assert.equal(result.G,5);
+  assert(result.chunks.every(g=>g.length>0));
+  assert.deepEqual(Array.from(result.chunks.flat()),words);
+  c.submit(words.join(' '));
+  c.doBtn('groups');c.doBtn('groups');
+  assert.equal(c.state.G,5);
+  assert.equal(c.groups().length,5);
+  assert(c.groups().every(Boolean));
+  assert.equal(c.groups().join(' '),words.join(' '));
+});
+
+test('Browser, weekday and Swedish regression results match the new priority', ()=>{
+  const c=app();
+  c.submit('Browser checks passed, including Swedish and short inputs.');
+  assert.deepEqual(c.groups(),['Browser checks passed,','including Swedish','and short inputs.']);
+  c.submit('Monday Tuesday Wednesday Thursday Friday Saturday Sunday');
+  assert.deepEqual(c.groups(),['Monday Tuesday','Wednesday Thursday Friday','Saturday Sunday']);
+  c.submit(swedish);
+  assert.deepEqual(c.groups(),['Vi lär oss','att planera och följa','rutiner som fungerar']);
 });
 
 test('2 and 3 word inputs never create empty or excess groups, including Groups presses', ()=>{
