@@ -958,6 +958,15 @@ function scoreGrouping(groups, cutCosts){
   /* readability penalties */
   var readPenalty = 0;
   if(cutCosts){
+    var edge = (groups[0].length + groups[n-1].length) / 2;
+    for(var i = 1; i < n - 1; i++){
+      var size = groups[i].length;
+      var over = size > edge ? Math.max(0, size - edge - 1) : edge - size;
+      readPenalty += 1.5 * over;
+    }
+    if(sum >= 6){
+      for(var i = 0; i < n; i++) if(groups[i].length === 1) readPenalty += 2;
+    }
     var boundary = 0;
     for(var i = 0; i < n - 1; i++){
       boundary += groups[i].length;
@@ -984,7 +993,9 @@ function sentenceCutCosts(words){
   });
   var starts = /^(and|or|that|because|to|och|att|som)$/;
   var joins = /^(and|or|och|eller)$/;
-  for(var i = 1; i < words.length; i++) costs[i] = starts.test(clean[i]) ? 0 : 1;
+  for(var i = 1; i < words.length; i++){
+    costs[i] = starts.test(clean[i]) || /[,;:.!?]$/.test(words[i-1]) ? 0 : 1;
+  }
   /* Three or more comma-separated items can also form a list without "and". */
   for(var i = 0; i < words.length - 2; i++){
     var end = i;
@@ -1009,6 +1020,17 @@ function sentenceCutCosts(words){
   return costs;
 }
 
+/* Automatic suggestions only. User markers (VB-37, later) override these filters,
+   just as manual regrouping overrides the computed suggestion. */
+function sentenceGroupsAllowed(groups, wordCount){
+  var edge = (groups[0].length + groups[groups.length-1].length) / 2;
+  for(var i = 0; i < groups.length; i++){
+    if(wordCount >= 6 && groups[i].length === 1) return false;
+    if(i > 0 && i < groups.length - 1 && groups[i].length > edge + 2) return false;
+  }
+  return true;
+}
+
 /* One candidate search and score for both levels. G is optional: automatic on
    submit, fixed when the person explicitly chooses a group count. */
 function split(items, sentence, fixedG){
@@ -1021,6 +1043,7 @@ function split(items, sentence, fixedG){
   
   /* Automatic G tries 3-5 (or fewer for short input); fixed G searches only that count. */
   var bestScore = Infinity, bestResult = null;
+  var allowedScore = Infinity, allowedResult = null;
   
   var firstG = fixedG ? Math.min(fixedG, items.length) : Math.min(3, items.length);
   var lastG = fixedG ? firstG : Math.min(5, items.length);
@@ -1033,9 +1056,15 @@ function split(items, sentence, fixedG){
       /* small bias toward fewer groups: +0.15 per extra group beyond 3 */
       s += (G - 3) * 0.15;
       if(s < bestScore){ bestScore = s; bestResult = {chunks: candidates[c], G: G}; }
+      if(sentence && sentenceGroupsAllowed(candidates[c], items.length) && s < allowedScore){
+        allowedScore = s; allowedResult = {chunks: candidates[c], G: G};
+      }
     }
   }
   
+  /* Apply the same filters across all eligible G values, or within a fixed G.
+     If none pass (e.g. six words, fixed G=5), return the lowest score overall. */
+  if(allowedResult) return allowedResult;
   if(bestResult) return bestResult;
   
   /* Preserve the word fallback when no syllable partition fits the chosen count. */
