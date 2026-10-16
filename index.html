@@ -898,9 +898,9 @@ function microSyllables(word){
   return result;
 }
 
-/* Step 2: Generate ALL ways to merge N micro-syllables into G groups (1-4 chars each)
+/* Step 2: Generate ALL contiguous partitions into G groups. Word chunks have 1-4 chars.
    Returns array of arrays, e.g. [["com","pu","ter"], ["co","mpu","ter"], ...] */
-function allGroupings(syllables, G){
+function allGroupings(syllables, G, sentence){
   var results = [];
   var N = syllables.length;
   if(N < G) return results;
@@ -909,10 +909,10 @@ function allGroupings(syllables, G){
   function recurse(pos, g, current){
     if(g === G){
       if(pos === N){
-        /* check all groups are 1-4 chars */
+        /* Sentence groups are nonempty; word chunks have 1-4 chars. */
         var valid = true;
         for(var i = 0; i < current.length; i++){
-          if(current[i].length < 1 || current[i].length > 4){ valid = false; break; }
+          if(current[i].length < 1 || (!sentence && current[i].length > 4)){ valid = false; break; }
         }
         if(valid) results.push(current.slice());
       }
@@ -922,10 +922,10 @@ function allGroupings(syllables, G){
     var syllablesLeft = N - pos;
     /* this group can take 1..syllablesLeft-(remaining-1) syllables */
     var maxTake = syllablesLeft - (remaining - 1);
-    var grp = '';
+    var grp = sentence ? [] : '';
     for(var take = 1; take <= maxTake; take++){
-      grp += syllables[pos + take - 1];
-      if(grp.length > 4) break; /* can't exceed 4 chars */
+      grp = sentence ? grp.concat([syllables[pos + take - 1]]) : grp + syllables[pos + take - 1];
+      if(!sentence && grp.length > 4) break; /* word chunks can't exceed 4 chars */
       if(grp.length >= 1){
         current.push(grp);
         recurse(pos + take, g + 1, current);
@@ -938,7 +938,7 @@ function allGroupings(syllables, G){
 }
 
 /* Step 3: Score a grouping — lower is better */
-function scoreGrouping(groups){
+function scoreGrouping(groups, cutCosts){
   var n = groups.length;
   /* balance: std dev of group lengths */
   var sum = 0;
@@ -957,6 +957,14 @@ function scoreGrouping(groups){
 
   /* readability penalties */
   var readPenalty = 0;
+  if(cutCosts){
+    var boundary = 0;
+    for(var i = 0; i < n - 1; i++){
+      boundary += groups[i].length;
+      readPenalty += cutCosts[boundary];
+    }
+    return balance + symmetryPenalty + readPenalty;
+  }
   for(var i = 1; i < n; i++){
     var prevLast = groups[i-1][groups[i-1].length - 1];
     var curFirst = groups[i][0];
@@ -968,23 +976,60 @@ function scoreGrouping(groups){
   return balance + symmetryPenalty + readPenalty;
 }
 
-function splitSingleWord(word){
-  if(word.length <= 4){
-    return {chunks: [word], G: 1};
+/* Sentence costs are a suggestion, not a language parser. Prefer clause starts,
+   but protect short coordinated runs, including comma-separated lists. */
+function sentenceCutCosts(words){
+  var costs = [], clean = words.map(function(w){
+    return w.toLowerCase().replace(/^[^a-zåäö]+|[^a-zåäö]+$/g, '');
+  });
+  var starts = /^(and|or|that|because|to|och|att|som)$/;
+  var joins = /^(and|or|och|eller)$/;
+  for(var i = 1; i < words.length; i++) costs[i] = starts.test(clean[i]) ? 0 : 1;
+  /* Three or more comma-separated items can also form a list without "and". */
+  for(var i = 0; i < words.length - 2; i++){
+    var end = i;
+    while(end < words.length - 1 && /,$/.test(words[end])) end++;
+    if(end - i >= 2){
+      for(var b = i + 1; b <= end; b++) costs[b] = 8;
+      i = end;
+    }
   }
+  for(var i = 1; i < words.length - 1; i++){
+    if(!joins.test(clean[i]) || !clean[i-1] || !clean[i+1]) continue;
+    /* A pronoun/determiner after the conjunction usually starts a clause. */
+    if(isCommon(clean[i-1]) || isCommon(clean[i+1]) || /[.;:!?]$/.test(words[i-1])) continue;
+    var start = i - 1;
+    if(start > 0 && /,$/.test(words[start-1])){
+      while(start > 0 && /,$/.test(words[start-1])) start--;
+    }else if(start > 0 && !isCommon(clean[start-1]) && !/[,.;:!?]$/.test(words[start-1])){
+      start--; /* e.g. "identify analyze and evaluate" */
+    }
+    for(var b = start + 1; b <= i + 1; b++) costs[b] = 8;
+  }
+  return costs;
+}
+
+/* One candidate search and score for both levels. G is optional: automatic on
+   submit, fixed when the person explicitly chooses a group count. */
+function split(items, sentence, fixedG){
+  if(!sentence && !fixedG && items.length <= 4){
+    return {chunks: [items], G: 1};
+  }
+  if(!items.length) return {chunks: [], G: 0};
+  var syls = sentence ? items : microSyllables(items);
+  var cutCosts = sentence ? sentenceCutCosts(items) : null;
   
-  var syls = microSyllables(word);
-  
-  /* Try ALL G values (3,4,5) and pick the BEST score across all */
+  /* Automatic G tries 3-5 (or fewer for short input); fixed G searches only that count. */
   var bestScore = Infinity, bestResult = null;
   
-  for(var G = 3; G <= 5; G++){
-    if(word.length < G) continue;
+  var firstG = fixedG ? Math.min(fixedG, items.length) : Math.min(3, items.length);
+  var lastG = fixedG ? firstG : Math.min(5, items.length);
+  for(var G = firstG; G <= lastG; G++){
     
-    var candidates = allGroupings(syls, G);
+    var candidates = allGroupings(syls, G, sentence);
     
     for(var c = 0; c < candidates.length; c++){
-      var s = scoreGrouping(candidates[c]);
+      var s = scoreGrouping(candidates[c], cutCosts);
       /* small bias toward fewer groups: +0.15 per extra group beyond 3 */
       s += (G - 3) * 0.15;
       if(s < bestScore){ bestScore = s; bestResult = {chunks: candidates[c], G: G}; }
@@ -993,16 +1038,28 @@ function splitSingleWord(word){
   
   if(bestResult) return bestResult;
   
-  /* Fallback: equal character division into 3 (or fewer) groups */
-  var G = Math.min(3, word.length);
-  var len = word.length, base = Math.floor(len / G), rem = len % G;
+  /* Preserve the word fallback when no syllable partition fits the chosen count. */
+  var G = firstG;
+  var len = items.length, base = Math.floor(len / G), rem = len % G;
   var chunks = [], pos = 0;
   for(var i = 0; i < G; i++){
     var sz = base + (i < rem ? 1 : 0);
-    chunks.push(word.slice(pos, pos + sz));
+    chunks.push(items.slice(pos, pos + sz));
     pos += sz;
   }
   return {chunks: chunks, G: G};
+}
+
+function splitSingleWord(word, G){ return split(word, false, G); }
+
+function applySplit(result){
+  var pos = 0;
+  state.G = result.G;
+  state.splits = [];
+  for(var i = 0; i < result.chunks.length - 1; i++){
+    pos += result.chunks[i].length;
+    state.splits.push(pos);
+  }
 }
 
 /* ── faces ───────────────────────────────────────────── */
@@ -1021,15 +1078,6 @@ function getGroupArrays(){
   var out=[],prev=0;
   for(var i=0;i<state.splits.length;i++){var a=[];for(var j=prev;j<state.splits[i];j++)a.push(j);out.push(a);prev=state.splits[i];}
   var a=[];for(var j=prev;j<state.words.length;j++)a.push(j);out.push(a);return out;
-}
-function buildSplits(W,G){
-  if(!W||!G)return[];
-  var base=Math.floor(W/G), rem=W%G;
-  var cnt=[];
-  for(var i=0;i<G;i++) cnt.push(base + (i < rem ? 1 : 0));
-  var pos=0,s=[];
-  for(var i=0;i<G-1;i++){pos+=cnt[i];s.push(pos);}
-  return s;
 }
 function tryMove(wi,tg){
   var sg=groupOf(wi);if(sg===tg)return;
@@ -1533,7 +1581,18 @@ window.addEventListener('mouseup', function(e){
 function doBtn(id){
   if(id==='dark'){isDark=!isDark;render();}
   else if(id==='color'){noColor=!noColor;render();}
-  else if(id==='groups'){state.G=state.G>=5?3:state.G+1;randomHP();_wordMemory=[];if(state.words.length){state.splits=buildSplits(state.words.length,state.G);drag.active=false;render();DBG_GROUP_PX=[];buildGroupPXSliders();}else render();}
+  else if(id==='groups'){
+    var count = state.words.length;
+    var maxG = Math.min(5, count), minG = Math.min(3, count);
+    var G = state.G >= maxG ? minG : state.G + 1;
+    randomHP();_wordMemory=[];
+    if(count){
+      var result = state.charMode ? splitSingleWord(state.words.join(''), G) : split(state.words, true, G);
+      applySplit(result);
+      if(state.charMode) state.charGroups = result.chunks;
+      drag.active=false;render();DBG_GROUP_PX=[];buildGroupPXSliders();
+    }else render();
+  }
   else if(id==='meme'){var prev=memeIdx;do{memeIdx=Math.floor(Math.random()*FACES.length);}while(memeIdx===prev&&FACES.length>1);randomHP();_wordMemory=[];if(state.words.length)render();}
 }
 var tip=document.getElementById('tooltip');
@@ -1792,6 +1851,11 @@ function go(){
     _firstInput=true;exitPractice();return;
   }
   if(_firstInput){randomHP();_firstInput=false;}
+  setThread(raw);
+}
+
+function setThread(raw){
+  var sent=document.getElementById('sentOut');
   var parts=raw.split(/\s+/);
   if(parts.length > 15) parts = parts.slice(0, 15);
   drag.active=false;
@@ -1819,14 +1883,8 @@ function go(){
   }else{
     state.charMode = false;
     if(sent) sent.textContent=raw;
-    var W=parts.length;
-    var G=state.G;
-    var minG = Math.ceil(W/3);
-    if(G < minG) G = minG;
-    G = Math.min(G, W);
-    state.G=G;
     state.words=parts;
-    state.splits=buildSplits(W,G);
+    applySplit(split(parts, true));
   }
   render();
   DBG_GROUP_PX=[];
@@ -1911,13 +1969,7 @@ document.fonts.ready.then(function(){
   var urlText=new URLSearchParams(window.location.search).get('text');
   var raw=urlText?urlText:EXAMPLES[Math.floor(Math.random()*EXAMPLES.length)];
   document.getElementById('inp').value=raw;
-  var sent=document.getElementById('sentOut');
-  if(sent) sent.textContent=raw;
-  var parts=raw.split(/\s+/);
-  state.G=Math.min(state.G,parts.length);
-  state.charMode=false;
-  state.words=parts;state.splits=buildSplits(parts.length,state.G);
-  setTimeout(function(){render();if(urlText)go();},250);
+  setTimeout(function(){if(urlText)go();else setThread(raw);},250);
 });
 </script>
 </body>
