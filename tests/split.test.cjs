@@ -6,10 +6,12 @@ const vm = require('node:vm');
 const source = readFileSync(require('node:path').join(__dirname, '../index.html'), 'utf8');
 const acceptance = 'Risk management helps organizations identify analyze and evaluate threats';
 const swedish = 'Vi lär oss att planera och följa rutiner som fungerar';
+const twenty = 'Every morning our team reviews the plan and checks the results before we share new ideas with our colleagues together';
+const twentyOne = twenty + ' today';
 
 // Execute the actual splitter and UI handlers with drawing/DOM effects stubbed.
 function app(){
-  const elements = {inp:{value:''}, sentOut:{textContent:''}};
+  const elements = {inp:{value:''}, sentOut:{textContent:''}, sentenceNotice:{textContent:'',hidden:true}};
   const c = vm.createContext({
     state:{words:[], splits:[], G:3, charMode:false}, drag:{active:false},
     _wordMemory:[], _firstInput:true, DBG_GROUP_PX:[], DBG_GROUP_OX:[],
@@ -25,6 +27,7 @@ function app(){
     source.slice(source.indexOf('function go('), source.indexOf("document.getElementById('inp').addEventListener('keydown'")), c);
   c.submit = text=>{elements.inp.value=text;c.go();};
   c.groups = ()=>JSON.parse(JSON.stringify(c.getGroupArrays().map(g=>g.map(i=>c.state.words[i]).join(c.state.charMode?'':' '))));
+  c.notice = ()=>({...elements.sentenceNotice});
   return c;
 }
 
@@ -54,10 +57,11 @@ test('Swedish clause starts are cheap, coordinated och list stays together', ()=
 
 test('punctuation pauses are cheap; detected lists retain cost 8 but yield to equality', ()=>{
   const c=app();
-  for(const mark of [',',';',':','.','!','?']){
+  for(const mark of [',',';',':','.','!','?','،','؛','؟']){
     assert.equal(c.sentenceCutCosts(['We','pause'+mark,'then','continue'])[2],0);
   }
   assert.equal(c.sentenceCutCosts(['We','pause','then','continue'])[2],1);
+  assert.equal(c.sentenceCutCosts('الأمن مهم، لأنه يحمي البيانات'.split(' '))[2],0);
   for(const phrase of ['identify, analyze, and evaluate', 'identify, analyze, evaluate']){
     const words=('We '+phrase+' risks before taking action').split(' ');
     const costs=c.sentenceCutCosts(words);
@@ -92,7 +96,8 @@ test('automatic and fixed G minimize the score within filters, or all candidates
     'Identify, classify, assess, treat and monitor risks in the organisation',
     'Monday Tuesday Wednesday Thursday Friday Saturday Sunday',
     'Vi granskar resultaten, förklarar riskerna och följer planen som fungerar',
-    ...Array.from({length:14},(_,i)=>Array.from({length:i+2},(_,j)=>'item'+j).join(' '))];
+    twenty,twentyOne,
+    ...Array.from({length:19},(_,i)=>Array.from({length:i+2},(_,j)=>'item'+j).join(' '))];
   for(const text of samples){
     const words=text.split(' '), costs=c.sentenceCutCosts(words);
     function candidate(cuts){
@@ -104,14 +109,20 @@ test('automatic and fixed G minimize the score within filters, or all candidates
         1.5*Math.abs(sizes[0]-sizes.at(-1)) + cuts.reduce((s,i)=>s+costs[i],0) + .15*(sizes.length-3) +
         middle.reduce((s,n)=>s+1.5*(n<edge?edge-n:Math.max(0,n-edge-1)),0) +
         (words.length>=6?2*sizes.filter(n=>n===1).length:0);
-      const allowed=(words.length<6||sizes.every(n=>n>1)) && middle.every(n=>n<=edge+2);
+      const allowed=(words.length<6||sizes.every(n=>n>1)) && sizes.every(n=>n<=4);
       return {score,allowed};
     }
     const minima={}, allowedMinima={};
     const minG=Math.min(3,words.length), maxG=Math.min(5,words.length);
     for(let G=minG;G<=maxG;G++){minima[G]=Infinity;allowedMinima[G]=Infinity;}
-    // Independent enumeration via boundary bit masks, rather than the production recursion.
-    for(let mask=0;mask<2**(words.length-1);mask++){
+    // Enumerate boundary combinations independently, without exploring all 2^(N-1) masks.
+    function* masks(n,k,start=0,mask=0){
+      if(!k){yield mask;return;}
+      for(let bit=start;bit<=n-k;bit++)yield* masks(n,k-1,bit+1,mask|(1<<bit));
+    }
+    for(const mask of (function*(){
+      for(let G=minG;G<=maxG;G++)yield* masks(words.length-1,G-1);
+    })()){
       const cuts=[];
       for(let i=1;i<words.length;i++)if(mask & (1<<(i-1)))cuts.push(i);
       const G=cuts.length+1;
@@ -138,11 +149,13 @@ test('automatic and fixed G minimize the score within filters, or all candidates
   }
 });
 
-test('filters reject oversized middles and singleton lines, and fixed G=5 still returns six words', ()=>{
+test('filters cap every position and reject singleton lines; impossible fixed G still returns all words', ()=>{
   const c=app();
   function groups(sizes){return sizes.map(n=>Array(n).fill('word'));}
   assert.equal(c.sentenceGroupsAllowed(groups([1,6,1]),8),false);
   assert.equal(c.sentenceGroupsAllowed(groups([2,5,2]),9),false);
+  assert.equal(c.sentenceGroupsAllowed(groups([5,3,3]),11),false);
+  assert.equal(c.sentenceGroupsAllowed(groups([3,3,5]),11),false);
   assert.equal(c.sentenceGroupsAllowed(groups([2,4,2]),8),true);
   assert.equal(c.sentenceGroupsAllowed(groups([1,2,1]),4),true);
   const words='one two three four five six'.split(' ');
@@ -156,6 +169,11 @@ test('filters reject oversized middles and singleton lines, and fixed G=5 still 
   assert.equal(c.groups().length,5);
   assert(c.groups().every(Boolean));
   assert.equal(c.groups().join(' '),words.join(' '));
+  c.submit(Array.from({length:15},(_,i)=>'item'+i).join(' '));
+  c.state.G=5;c.doBtn('groups');
+  assert.equal(c.state.G,3);
+  assert.equal(c.state.words.length,15);
+  assert(c.groups().some(g=>g.split(' ').length>4));
 });
 
 test('Browser, weekday and Swedish regression results match the new priority', ()=>{
@@ -166,6 +184,47 @@ test('Browser, weekday and Swedish regression results match the new priority', (
   assert.deepEqual(c.groups(),['Monday Tuesday','Wednesday Thursday Friday','Saturday Sunday']);
   c.submit(swedish);
   assert.deepEqual(c.groups(),['Vi lär oss','att planera och följa','rutiner som fungerar']);
+});
+
+test('automatic sentence corpus through 20 words has capped groups and no singleton from six words', ()=>{
+  const c=app();
+  const corpus=[acceptance,swedish,twenty,
+    'Browser sends requests to the server and receives responses as inputs.',
+    'الأمن مهم، لأنه يحمي البيانات'];
+  for(let n=1;n<=20;n++){
+    for(let variant=0;variant<4;variant++){
+      corpus.push(Array.from({length:n},(_,i)=>['item'+i,'and','pause,','مهم،'][(i+variant)%4]).join(' '));
+    }
+  }
+  for(const text of corpus){
+    const words=text.split(' '), result=c.split(words,true);
+    assert(result.chunks.every(g=>g.length<=4),text);
+    if(words.length>=6)assert(result.chunks.every(g=>g.length>=2),text);
+    assert.deepEqual(Array.from(result.chunks.flat()),words);
+    assert.deepEqual(c.split(words,true),result);
+  }
+});
+
+test('20 words stay intact as five fours; 21 words fall back with a notice that clears', ()=>{
+  const c=app();
+  assert.equal(twenty.split(' ').length,20);
+  c.submit(twenty);
+  assert.deepEqual(c.groups().map(g=>g.split(' ').length),[4,4,4,4,4]);
+  assert.equal(c.groups().join(' '),twenty);
+  assert.equal(c.split(twenty.split(' '),true).longSentence,false);
+  assert.equal(c.notice().hidden,true);
+  c.submit(twentyOne);
+  assert.equal(c.groups().join(' '),twentyOne);
+  assert.equal(c.split(twentyOne.split(' '),true).longSentence,true);
+  assert.equal(c.notice().textContent,'long sentence: split it into two');
+  assert.equal(c.notice().hidden,false);
+  c.doBtn('groups');
+  assert.equal(c.notice().hidden,false);
+  for(const text of [twenty,'computer','']){
+    c.submit(twentyOne);c.submit(text);
+    assert.equal(c.notice().textContent,'');
+    assert.equal(c.notice().hidden,true);
+  }
 });
 
 test('2 and 3 word inputs never create empty or excess groups, including Groups presses', ()=>{
@@ -202,19 +261,21 @@ test('same input gives same contiguous groups regardless of previous G', ()=>{
 });
 
 test('initial page load uses the same automatic split as submit', ()=>{
-  for(const text of [acceptance,swedish,'two words','one two three','computer']){
+  for(const text of [acceptance,swedish,twenty,twentyOne,'two words','one two three','computer']){
     const c=app();
     c.document.fonts={ready:{then:fn=>fn()}};
     c.window={location:{search:'?text='+encodeURIComponent(text)}};
     c.URLSearchParams=URLSearchParams;
     c.EXAMPLES=[text];c.setTimeout=fn=>fn();
     vm.runInContext(source.slice(source.indexOf('document.fonts.ready.then'), source.indexOf('</script>', source.indexOf('document.fonts.ready.then'))),c);
-    const loaded=c.groups();c.submit(text);
+    const loaded=c.groups(),notice=c.notice();c.submit(text);
     assert.deepEqual(c.groups(),loaded);
+    assert.deepEqual(c.notice(),notice);
     // Also exercise a random-example initial load (no URL parameter).
     c.window.location.search='';
     vm.runInContext(source.slice(source.indexOf('document.fonts.ready.then'), source.indexOf('</script>', source.indexOf('document.fonts.ready.then'))),c);
     assert.deepEqual(c.groups(),loaded);
+    assert.deepEqual(c.notice(),notice);
   }
 });
 
