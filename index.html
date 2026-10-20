@@ -1039,6 +1039,23 @@ function split(items, sentence, fixedG){
     return {chunks: [items], G: 1};
   }
   if(!items.length) return {chunks: [], G: 0};
+  /* Long sentences bypass candidate search. Multiple hills remain deferred.
+     Equal contiguous groups keep all words; extras go middle-out, left on ties. */
+  if(sentence && items.length > 20){
+    var G = fixedG ? Math.min(fixedG, items.length) : 5;
+    var base = Math.floor(items.length / G), rem = items.length % G;
+    var middleOut = [], sizes = [], chunks = [], pos = 0;
+    for(var i = 0; i < G; i++){ middleOut.push(i); sizes.push(base); }
+    middleOut.sort(function(a, b){
+      return Math.abs(2*a - G + 1) - Math.abs(2*b - G + 1) || a - b;
+    });
+    for(var i = 0; i < rem; i++) sizes[middleOut[i]]++;
+    for(var i = 0; i < G; i++){
+      chunks.push(items.slice(pos, pos + sizes[i]));
+      pos += sizes[i];
+    }
+    return {chunks: chunks, G: G, longSentence: true};
+  }
   var syls = sentence ? items : microSyllables(items);
   var cutCosts = sentence ? sentenceCutCosts(items) : null;
   
@@ -1064,8 +1081,7 @@ function split(items, sentence, fixedG){
   }
   
   /* Apply the same filters across all eligible G values, or within a fixed G.
-     If none pass (e.g. six words, fixed G=5, or >20 words), return the lowest
-     score overall. Multiple hills for >20 words are deferred; flag the notice. */
+     If none pass (e.g. six words, fixed G=5), return the lowest score overall. */
   var result = allowedResult || bestResult;
   if(result){
     if(sentence) result.longSentence = items.length > 20;
