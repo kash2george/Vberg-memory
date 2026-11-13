@@ -2,7 +2,7 @@
    controlled by this worker. Network first, so a new deploy is picked up
    at once; the cache answers only when the network does not. */
 var CACHE = 'vberg-board-v1';
-var FILES = ['./', 'core.js', 'hills.js', 'store.js', 'commands.js', 'board.js', '../assets/vberg-engine.js'];
+var FILES = ['./', 'core.js', 'hills.js', 'store.js', 'commands.js', 'ink.js', 'board.js', '../assets/vberg-engine.js'];
 
 self.addEventListener('install', function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(FILES); }).then(function(){ return self.skipWaiting(); }));

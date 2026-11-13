@@ -2,7 +2,7 @@
    Split, layout and drawing are the site's (assets/vberg-engine.js). */
 (function(){
   'use strict';
-  var C = VBoardCore, Hills = VBoardHills;
+  var C = VBoardCore, Hills = VBoardHills, Ink = VBoardInk;
   var commands = VBoardCommands.create(VBoardStore, C);
   var app = document.getElementById('app');
   var viewport = document.getElementById('viewport');
@@ -103,7 +103,50 @@
     });
     var all = Hills.all();
     if(all.length) focusHill(all[all.length - 1], false);
+    Ink.show(data.strokes);
   }, notSaved);
+
+  /* ── free drawing: pen, hide, clear. A separate layer; no hill is touched ── */
+  var penOn = false;
+  var btnPen = document.getElementById('btnPen');
+  var btnInk = document.getElementById('btnInk');
+  var btnClear = document.getElementById('btnClear');
+  var clearTimer = 0;
+
+  function setInkHidden(hidden){
+    Ink.setHidden(hidden);
+    btnInk.textContent = hidden ? 'Show' : 'Hide';
+    btnInk.setAttribute('aria-pressed', String(hidden));
+  }
+  function setPen(on){
+    penOn = on;
+    if(on) setInkHidden(false);          /* never draw on a hidden layer */
+    btnPen.setAttribute('aria-pressed', String(on));
+    viewport.classList.toggle('pen', on);
+  }
+  function disarmClear(){
+    clearTimeout(clearTimer);
+    btnClear.textContent = 'Clear';
+    btnClear.removeAttribute('data-armed');
+  }
+  btnPen.addEventListener('click', function(){ setPen(!penOn); });
+  btnInk.addEventListener('click', function(){
+    var hide = !Ink.hidden();
+    if(hide) setPen(false);
+    setInkHidden(hide);
+  });
+  /* Clear cannot be undone, so it asks once: tap, then tap again. */
+  btnClear.addEventListener('click', function(){
+    if(!btnClear.hasAttribute('data-armed')){
+      btnClear.setAttribute('data-armed', '');
+      btnClear.textContent = 'Clear all?';
+      clearTimer = setTimeout(disarmClear, 3000);
+      return;
+    }
+    disarmClear();
+    Ink.clear();
+    commands.clearStrokes().catch(notSaved);
+  });
 
   function syncTheme(){ document.body.classList.toggle('dark', isDark); }
 
@@ -140,11 +183,19 @@
 
     if(ids().length === 2){
       dropWordDrag();
+      Ink.end(false);                    /* a second finger turns it into a pinch */
       gesture = null;
       startPinch();
       return;
     }
     if(ids().length > 2){ gesture = null; return; }
+
+    if(penOn){
+      var w = C.toWorld(cam, p.x, p.y);
+      Ink.begin(w.x, w.y);
+      gesture = {type: 'ink', id: e.pointerId, start: p, moved: false, hill: null, btn: null, box: null};
+      return;
+    }
 
     var hill = Hills.byElement(e.target);
     gesture = {type: 'pan', id: e.pointerId, start: p, moved: false, hill: hill, btn: null, box: null};
@@ -177,6 +228,12 @@
       return;
     }
     if(n !== 1 || !gesture || gesture.id !== e.pointerId) return;
+
+    if(gesture.type === 'ink'){
+      var w = C.toWorld(cam, p.x, p.y);
+      Ink.extend(w.x, w.y, 1.5 / cam.z);
+      return;
+    }
 
     if(!gesture.moved){
       if(Math.hypot(p.x - gesture.start.x, p.y - gesture.start.y) <= TAP_SLOP) return;
@@ -215,6 +272,12 @@
     if(!g || g.id !== e.pointerId) return;
     gesture = null;
     var cancelled = e.type === 'pointercancel';
+
+    if(g.type === 'ink'){
+      var points = Ink.end(!cancelled);
+      if(points) commands.addStroke(newId(), points).catch(notSaved);
+      return;
+    }
 
     if(g.type === 'word'){
       /* Same finish as the site's mouseup: the boundary moves, order stays. */
@@ -323,6 +386,7 @@
     camera: function(){ return {x: cam.x, y: cam.y, z: cam.z}; },
     showPlace: showPlace,
     addEntry: addEntry,
-    focused: function(){ return focused; }
+    focused: function(){ return focused; },
+    commands: commands
   };
 })();

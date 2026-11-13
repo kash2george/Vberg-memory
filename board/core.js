@@ -135,6 +135,32 @@
     return {id: 'regroup:' + nodeId, node: nodeId, kind: 'regroup', splits: splits.slice()};
   }
 
+  /* ── free drawing: its own layer, its own store ──
+     A stroke is a line the person drew on the board. It is not part of any
+     thread and no hill reads it. Points are board coordinates, flat:
+     [x0, y0, x1, y1, …]. */
+  var PEN = {color: '#e03131', width: 4};
+
+  function strokeRecord(id, boardId, points){
+    var flat = [];
+    for(var i = 0; i < points.length; i++) flat.push(Math.round(points[i] * 10) / 10);
+    return {id: id, board: boardId, points: flat, color: PEN.color, width: PEN.width};
+  }
+  function checkStroke(rec){
+    var ok = rec && typeof rec.id === 'string' && typeof rec.board === 'string' &&
+      typeof rec.color === 'string' && typeof rec.width === 'number' &&
+      Array.isArray(rec.points) && rec.points.length >= 2 && rec.points.length % 2 === 0 &&
+      rec.points.every(function(n){ return typeof n === 'number' && isFinite(n); });
+    if(!ok) throw new Error('strokes: bad record');
+    return rec;
+  }
+  function strokePath(points){
+    var d = 'M' + points[0] + ' ' + points[1];
+    if(points.length === 2) return d + 'L' + points[0] + ' ' + points[1];
+    for(var i = 2; i < points.length; i += 2) d += 'L' + points[i] + ' ' + points[i + 1];
+    return d;
+  }
+
   var api = {
     HILL_W: HILL_W, HILL_H: HILL_H, CAPTION_H: CAPTION_H, ROW_LEN: ROW_LEN,
     ZOOM_MIN: ZOOM_MIN, ZOOM_MAX: ZOOM_MAX,
@@ -142,7 +168,8 @@
     placeOf: placeOf, fitCamera: fitCamera,
     seedOf: seedOf, seededRandom: seededRandom,
     BOARD_ID: BOARD_ID, orderAfter: orderAfter, checkThreadRecord: checkThreadRecord,
-    boardNode: boardNode, entryRecords: entryRecords, regroupRecord: regroupRecord
+    boardNode: boardNode, entryRecords: entryRecords, regroupRecord: regroupRecord,
+    PEN: PEN, strokeRecord: strokeRecord, checkStroke: checkStroke, strokePath: strokePath
   };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.VBoardCore = api;

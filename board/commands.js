@@ -24,7 +24,14 @@
       /* The person moved a boundary: keep it as the new home split. */
       regroup: function(nodeId, splits){
         return store.putAnnotation(C.checkThreadRecord('annotations', C.regroupRecord(nodeId, splits)));
-      }
+      },
+
+      /* Free drawing. Goes to the strokes store only; no thread record is
+         read or written. */
+      addStroke: function(id, points){
+        return store.putStroke(C.checkStroke(C.strokeRecord(id, C.BOARD_ID, points)));
+      },
+      clearStrokes: function(){ return store.clearStrokes(C.BOARD_ID); }
     };
   }
 

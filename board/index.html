@@ -50,6 +50,11 @@ body { font-family:'Reggae One',system-ui,sans-serif; background:#eee8da; color:
   font:13px/1.4 system-ui,sans-serif; color:inherit; background:rgba(255,255,255,.6);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
+/* ── free drawing: a separate layer above the hills ── */
+#ink { position:absolute; left:0; top:0; width:1px; height:1px; overflow:visible; pointer-events:none; z-index:2; }
+#ink path { fill:none; stroke-linecap:round; stroke-linejoin:round; }
+#ink.hidden { display:none; }
+#viewport.pen { cursor:crosshair; }
 body.dark { color:#d8d2c4; }
 body.dark #viewport { background-image:radial-gradient(rgba(216,210,196,.25) 1px, transparent 1.5px); }
 body.dark .hill.focused canvas { box-shadow:0 0 0 3px rgba(216,210,196,.6); }
@@ -76,9 +81,14 @@ body.dark .hill .back, body.dark #tools button { background:rgba(255,255,255,.14
 <body>
 <div id="app">
   <div id="viewport">
-    <div id="world"></div>
+    <div id="world">
+      <svg id="ink" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+    </div>
     <div id="status" role="status" hidden></div>
     <div id="tools">
+      <button id="btnPen" type="button" aria-pressed="false" title="Draw freely on the board">Pen</button>
+      <button id="btnInk" type="button" aria-pressed="false" title="Hide or show the drawing layer">Hide</button>
+      <button id="btnClear" type="button" title="Remove all drawing">Clear</button>
       <button id="btnHome" type="button" title="Go to the newest hill" aria-label="Go to the newest hill">⌂</button>
     </div>
   </div>
@@ -97,6 +107,7 @@ body.dark .hill .back, body.dark #tools button { background:rgba(255,255,255,.14
 <script src="hills.js"></script>
 <script src="store.js"></script>
 <script src="commands.js"></script>
+<script src="ink.js"></script>
 <script src="board.js"></script>
 </body>
 </html>

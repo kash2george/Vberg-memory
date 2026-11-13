@@ -1,9 +1,10 @@
 /* VBerg board — storage on the device (IndexedDB). No server, no sync.
-   Stores mirror Spec §1b: nodes, placements, annotations. Only
-   commands.js calls this file. */
+   Thread stores mirror Spec §1b: nodes, placements, annotations.
+   Free drawing has its own store, strokes, keyed by board: the only place
+   where coordinates are stored. Only commands.js calls this file. */
 var VBoardStore = (function(){
   'use strict';
-  var DB_NAME = 'vberg-board', DB_VERSION = 1;
+  var DB_NAME = 'vberg-board', DB_VERSION = 2;
   var opening = null;
 
   function open(){
@@ -21,6 +22,9 @@ var VBoardStore = (function(){
         }
         if(!db.objectStoreNames.contains('annotations')){
           db.createObjectStore('annotations', {keyPath: 'id'}).createIndex('node', 'node');
+        }
+        if(!db.objectStoreNames.contains('strokes')){
+          db.createObjectStore('strokes', {keyPath: 'id'}).createIndex('board', 'board');
         }
       };
       req.onsuccess = function(){
@@ -54,8 +58,9 @@ var VBoardStore = (function(){
   /* Everything on one board: its entries in thread order, each with its
      regroup annotation if any. */
   function load(boardId){
-    var entries = [];
-    return transact(['nodes', 'placements', 'annotations'], 'readonly', function(tx){
+    var entries = [], strokes = [];
+    return transact(['nodes', 'placements', 'annotations', 'strokes'], 'readonly', function(tx){
+      tx.objectStore('strokes').index('board').getAll(boardId).onsuccess = function(e){ strokes = e.target.result; };
       var nodes = tx.objectStore('nodes'), notes = tx.objectStore('annotations');
       tx.objectStore('placements').index('thread_order').getAll(threadRange(boardId)).onsuccess = function(e){
         e.target.result.forEach(function(placement, i){
@@ -66,7 +71,7 @@ var VBoardStore = (function(){
         });
       };
     }).then(function(){
-      return {entries: entries.filter(function(e){ return e.node; })};
+      return {entries: entries.filter(function(e){ return e.node; }), strokes: strokes};
     });
   }
 
@@ -92,5 +97,23 @@ var VBoardStore = (function(){
     return transact(['annotations'], 'readwrite', function(tx){ tx.objectStore('annotations').put(rec); });
   }
 
-  return {open: open, load: load, appendEntry: appendEntry, putAnnotation: putAnnotation};
+  function putStroke(rec){
+    return transact(['strokes'], 'readwrite', function(tx){ tx.objectStore('strokes').put(rec); });
+  }
+
+  function clearStrokes(boardId){
+    return transact(['strokes'], 'readwrite', function(tx){
+      tx.objectStore('strokes').index('board').openKeyCursor(boardId).onsuccess = function(e){
+        var cursor = e.target.result;
+        if(!cursor) return;
+        tx.objectStore('strokes').delete(cursor.primaryKey);
+        cursor.continue();
+      };
+    });
+  }
+
+  return {
+    open: open, load: load, appendEntry: appendEntry, putAnnotation: putAnnotation,
+    putStroke: putStroke, clearStrokes: clearStrokes
+  };
 })();
