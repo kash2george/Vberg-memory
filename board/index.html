@@ -28,6 +28,33 @@ body { font-family:'Reggae One',system-ui,sans-serif; background:#eee8da; color:
   box-shadow:0 1px 4px rgba(0,0,0,.15);
 }
 #tools button[aria-pressed="true"] { background:#2a2218; color:#fdfbf7; }
+
+/* ── one entry on the board: its place comes from its order ── */
+.hill { position:absolute; width:680px; }
+.hill .slot {
+  height:381px; border:2px dashed rgba(42,34,24,.3); border-radius:10px;
+}
+.hill .ground {
+  min-height:64px; padding:8px 6px 0; text-align:center; font-size:20px; line-height:1.35;
+  word-break:break-word; white-space:pre-wrap;
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
+}
+
+/* ── input line at the bottom, like a chat window ── */
+#bar { flex:0 0 auto; background:#d4c9b0; padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }
+#barRow { display:flex; align-items:flex-end; gap:8px; max-width:900px; margin:0 auto; }
+#inp {
+  flex:1 1 auto; min-width:0; resize:none; overflow-y:auto;
+  font:16px/1.4 'Reggae One',system-ui,sans-serif; color:#2a2218; background:#f5f0e8;
+  border:none; border-radius:10px; padding:9px 12px; outline:none;
+  max-height:min(40vh, 9.4em);
+}
+#inp:focus { box-shadow:0 0 0 2px rgba(42,34,24,.25); }
+#send {
+  flex:0 0 auto; width:42px; height:42px; border:none; border-radius:10px; cursor:pointer;
+  font:20px system-ui,sans-serif; background:#2a2218; color:#fdfbf7;
+}
+#send:disabled { opacity:.35; cursor:default; }
 </style>
 </head>
 <body>
@@ -36,6 +63,14 @@ body { font-family:'Reggae One',system-ui,sans-serif; background:#eee8da; color:
     <div id="world"></div>
     <div id="tools">
       <button id="btnHome" type="button" title="Go to the newest hill" aria-label="Go to the newest hill">⌂</button>
+    </div>
+  </div>
+  <div id="bar">
+    <div id="barRow">
+      <textarea id="inp" rows="1" dir="auto" spellcheck="false" autocomplete="off"
+                aria-label="Write a sentence or a word"
+                placeholder="Write a sentence or a word"></textarea>
+      <button id="send" type="button" aria-label="Draw it on the board" disabled>↑</button>
     </div>
   </div>
 </div>

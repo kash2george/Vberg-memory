@@ -1,4 +1,4 @@
-/* VBerg board — the page: camera (pan and zoom) and wiring. */
+/* VBerg board — the page: camera (pan and zoom), input line, wiring. */
 (function(){
   'use strict';
   var C = VBoardCore;
@@ -120,12 +120,62 @@
   window.addEventListener('resize', fitScreen);
   fitScreen();
 
-  document.getElementById('btnHome').addEventListener('click', function(){ showPlace(0, true); });
+  /* ── entries: the board's time thread, in entry order ── */
+  var entries = [];            /* [{text, el}] ; index = order on the thread */
+
+  function addEntry(text){
+    var index = entries.length, place = C.placeOf(index);
+    var el = document.createElement('div');
+    el.className = 'hill';
+    el.style.left = place.x + 'px';
+    el.style.top = place.y + 'px';
+    var slot = document.createElement('div');
+    slot.className = 'slot';
+    var ground = document.createElement('div');
+    ground.className = 'ground';
+    ground.dir = 'auto';
+    ground.textContent = text;
+    el.appendChild(slot);
+    el.appendChild(ground);
+    world.appendChild(el);
+    entries.push({text: text, el: el});
+    showPlace(index, true);
+  }
+
+  /* ── input line: grows with the text; Enter draws, Shift+Enter = new line ── */
+  var inp = document.getElementById('inp');
+  var send = document.getElementById('send');
+
+  function growInput(){
+    inp.style.height = 'auto';
+    inp.style.height = inp.scrollHeight + 'px';
+    send.disabled = !inp.value.trim();
+  }
+
+  function submit(){
+    var text = inp.value.trim();
+    if(!text) return;
+    inp.value = '';
+    growInput();
+    addEntry(text);
+  }
+
+  inp.addEventListener('input', growInput);
+  inp.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); submit(); }
+  });
+  send.addEventListener('click', function(){ submit(); inp.focus(); });
+  growInput();
+
+  document.getElementById('btnHome').addEventListener('click', function(){
+    showPlace(Math.max(0, entries.length - 1), true);
+  });
 
   showPlace(0, false);
 
   window.VBoard = {
     camera: function(){ return {x: cam.x, y: cam.y, z: cam.z}; },
-    showPlace: showPlace
+    showPlace: showPlace,
+    entries: function(){ return entries.map(function(e){ return e.text; }); }
   };
 })();
