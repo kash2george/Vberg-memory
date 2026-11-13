@@ -69,12 +69,80 @@
     };
   }
 
+  /* ── stored records (Spec §1b) ──
+     Thread data is nodes, placements and annotations. None of them may
+     carry a coordinate or a size (rule 1): screen places are computed from
+     `order`. Free-drawing strokes are the only stored coordinates and live
+     in their own store, keyed by board. */
+  var BOARD_ID = 'board:main';
+
+  /* Order key for the next point on a thread. Keys sort as plain strings:
+     a length letter, then base-36 digits ("a0" … "az", "b10" …). Appending
+     never rewrites an older key; room is left to insert between two keys
+     later by adding digits. */
+  function orderAfter(prev){
+    if(!prev) return 'a0';
+    var len = prev.charCodeAt(0) - 96;
+    var digits = (parseInt(prev.slice(1, 1 + len), 36) + 1).toString(36);
+    if(digits.length > len) len = digits.length;
+    while(digits.length < len) digits = '0' + digits;
+    return String.fromCharCode(96 + len) + digits;
+  }
+
+  var SHAPES = {
+    nodes:       {id: 'string', type: 'string', text: 'string', createdAt: 'string'},
+    placements:  {id: 'string', node: 'string', thread: 'string', order: 'string', orderKind: 'string'},
+    annotations: {id: 'string', node: 'string', kind: 'string', splits: 'boundaries'}
+  };
+
+  function isBoundaries(v){
+    if(!Array.isArray(v)) return false;
+    for(var i = 0; i < v.length; i++){
+      if(typeof v[i] !== 'number' || v[i] !== Math.floor(v[i]) || v[i] < 1) return false;
+      if(i && v[i] <= v[i - 1]) return false;
+    }
+    return true;
+  }
+
+  /* Every write of thread data passes here. Only the fields above are
+     allowed, so a coordinate cannot be stored even by mistake. */
+  function checkThreadRecord(store, rec){
+    var shape = SHAPES[store];
+    if(!shape) throw new Error('not a thread store: ' + store);
+    var keys = Object.keys(rec);
+    for(var i = 0; i < keys.length; i++){
+      if(!shape[keys[i]]) throw new Error(store + ': field not allowed: ' + keys[i]);
+    }
+    for(var k in shape){
+      var ok = shape[k] === 'boundaries' ? isBoundaries(rec[k]) : typeof rec[k] === shape[k];
+      if(!ok) throw new Error(store + ': bad or missing field: ' + k);
+    }
+    return rec;
+  }
+
+  function boardNode(){
+    return {id: BOARD_ID, type: 'board', text: 'Board', createdAt: ''};
+  }
+  /* One entry = one node + its placement on the board's time thread. */
+  function entryRecords(id, text, prevOrder, now){
+    return {
+      node: {id: id, type: /\s/.test(text) ? 'sentence' : 'word', text: text, createdAt: now},
+      placement: {id: 'p:' + id, node: id, thread: BOARD_ID, order: orderAfter(prevOrder), orderKind: 'sequence'}
+    };
+  }
+  /* A manual regroup: boundaries as word indices. Order is not touched. */
+  function regroupRecord(nodeId, splits){
+    return {id: 'regroup:' + nodeId, node: nodeId, kind: 'regroup', splits: splits.slice()};
+  }
+
   var api = {
     HILL_W: HILL_W, HILL_H: HILL_H, CAPTION_H: CAPTION_H, ROW_LEN: ROW_LEN,
     ZOOM_MIN: ZOOM_MIN, ZOOM_MAX: ZOOM_MAX,
     clampZoom: clampZoom, zoomAt: zoomAt, toWorld: toWorld,
     placeOf: placeOf, fitCamera: fitCamera,
-    seedOf: seedOf, seededRandom: seededRandom
+    seedOf: seedOf, seededRandom: seededRandom,
+    BOARD_ID: BOARD_ID, orderAfter: orderAfter, checkThreadRecord: checkThreadRecord,
+    boardNode: boardNode, entryRecords: entryRecords, regroupRecord: regroupRecord
   };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.VBoardCore = api;

@@ -106,7 +106,7 @@ var VBoardHills = (function(){
     return true;
   }
 
-  function create(id, text, index, world){
+  function create(id, text, index, world, splits){
     var place = C.placeOf(index);
     var el = document.createElement('div');
     el.className = 'hill';
@@ -127,7 +127,7 @@ var VBoardHills = (function(){
     world.appendChild(el);
 
     var h = {
-      id: id, text: text, index: index, seed: C.seedOf(id), splits: null, word: null,
+      id: id, text: text, index: index, seed: C.seedOf(id), splits: splits || null, word: null,
       el: el, canvas: canvas, ctx: canvas.getContext('2d'),
       back: back, thread: thread, note: note, view: freshView()
     };

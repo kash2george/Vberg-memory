@@ -28,6 +28,11 @@ body { font-family:'Reggae One',system-ui,sans-serif; background:#eee8da; color:
   box-shadow:0 1px 4px rgba(0,0,0,.15);
 }
 #tools button[aria-pressed="true"] { background:#2a2218; color:#fdfbf7; }
+#status {
+  position:absolute; top:8px; left:8px; z-index:5; max-width:60%;
+  font:13px/1.4 system-ui,sans-serif; padding:6px 10px; border-radius:8px;
+  background:#2a2218; color:#fdfbf7;
+}
 
 /* ── one hill on the board: its place comes from its order ── */
 .hill { position:absolute; width:680px; }
@@ -72,6 +77,7 @@ body.dark .hill .back, body.dark #tools button { background:rgba(255,255,255,.14
 <div id="app">
   <div id="viewport">
     <div id="world"></div>
+    <div id="status" role="status" hidden></div>
     <div id="tools">
       <button id="btnHome" type="button" title="Go to the newest hill" aria-label="Go to the newest hill">⌂</button>
     </div>
@@ -89,6 +95,8 @@ body.dark .hill .back, body.dark #tools button { background:rgba(255,255,255,.14
 <script src="../assets/vberg-engine.js"></script>
 <script src="core.js"></script>
 <script src="hills.js"></script>
+<script src="store.js"></script>
+<script src="commands.js"></script>
 <script src="board.js"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@
 (function(){
   'use strict';
   var C = VBoardCore, Hills = VBoardHills;
+  var commands = VBoardCommands.create(VBoardStore, C);
   var app = document.getElementById('app');
   var viewport = document.getElementById('viewport');
   var world = document.getElementById('world');
@@ -69,9 +70,19 @@
     return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   }
 
+  /* Data stays on this device. If the browser refuses storage, the board
+     still works for this visit and says so. */
+  var statusEl = document.getElementById('status');
+  function notSaved(err){
+    statusEl.textContent = 'Not saved on this device: storage is unavailable.';
+    statusEl.hidden = false;
+    if(window.console) console.warn('VBerg board storage:', err);
+  }
+
   function addEntry(text){
     var h = Hills.create(newId(), text, Hills.all().length, world);
     focusHill(h, true);
+    commands.addEntry(h.id, text).catch(notSaved);
     return h;
   }
 
@@ -79,8 +90,20 @@
      a view: its letters are not stored. */
   function noteRegroup(h){
     if(h.word) return;
-    h.splits = h.view.state.splits.slice();
+    var splits = h.view.state.splits.slice();
+    if(JSON.stringify(splits) === JSON.stringify(h.splits)) return;
+    h.splits = splits;
+    commands.regroup(h.id, splits).catch(notSaved);
   }
+
+  /* Reload: the same entries, in the same order, with their regroups. */
+  var ready = commands.load().then(function(data){
+    data.entries.forEach(function(e, i){
+      Hills.create(e.node.id, e.node.text, i, world, e.regroup ? e.regroup.splits : null);
+    });
+    var all = Hills.all();
+    if(all.length) focusHill(all[all.length - 1], false);
+  }, notSaved);
 
   function syncTheme(){ document.body.classList.toggle('dark', isDark); }
 
@@ -268,7 +291,7 @@
     if(!text) return;
     inp.value = '';
     growInput();
-    addEntry(text);
+    ready.then(function(){ addEntry(text); });
   }
 
   inp.addEventListener('input', growInput);
@@ -290,7 +313,13 @@
 
   showPlace(0, false);
 
+  /* Offline: cache the board's own files (scope /board/ only). */
+  if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  }
+
   window.VBoard = {
+    ready: ready,
     camera: function(){ return {x: cam.x, y: cam.y, z: cam.z}; },
     showPlace: showPlace,
     addEntry: addEntry,
