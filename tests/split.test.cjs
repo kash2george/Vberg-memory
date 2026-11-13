@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const {createHash} = require('node:crypto');
 const vm = require('node:vm');
-const source = readFileSync(require('node:path').join(__dirname, '../index.html'), 'utf8');
+const read = file=>readFileSync(require('node:path').join(__dirname, file), 'utf8');
+// The engine moved to its own file (VB-51, first slice); go() is still in index.html.
+const source = read('../assets/vberg-engine.js'), page = read('../index.html');
 const acceptance = 'Risk management helps organizations identify analyze and evaluate threats';
 const swedish = 'Vi lär oss att planera och följa rutiner som fungerar';
 const twenty = 'Every morning our team reviews the plan and checks the results before we share new ideas with our colleagues together';
@@ -23,8 +25,9 @@ function app(){
   vm.runInContext(source.slice(source.indexOf('var VOWELS'), source.indexOf('/* ── faces')) +
     source.slice(source.indexOf('function groupOf('), source.indexOf('var COMMON_WORDS')) +
     source.slice(source.indexOf('var COMMON_WORDS'), source.indexOf('function wordFontSize')) +
-    source.slice(source.indexOf('function doBtn('), source.indexOf('var tip=')) +
-    source.slice(source.indexOf('function go('), source.indexOf("document.getElementById('inp').addEventListener('keydown'")), c);
+    source.slice(source.indexOf('function doBtn('), source.indexOf('function setThread(')) +
+    source.slice(source.indexOf('function setThread(')) +
+    page.slice(page.indexOf('function go('), page.indexOf("document.getElementById('inp').addEventListener('keydown'")), c);
   c.submit = text=>{elements.inp.value=text;c.go();};
   c.groups = ()=>JSON.parse(JSON.stringify(c.getGroupArrays().map(g=>g.map(i=>c.state.words[i]).join(c.state.charMode?'':' '))));
   c.notice = ()=>({...elements.sentenceNotice});
@@ -303,13 +306,13 @@ test('initial page load uses the same automatic split as submit', ()=>{
     c.window={location:{search:'?text='+encodeURIComponent(text)}};
     c.URLSearchParams=URLSearchParams;
     c.EXAMPLES=[text];c.setTimeout=fn=>fn();
-    vm.runInContext(source.slice(source.indexOf('document.fonts.ready.then'), source.indexOf('</script>', source.indexOf('document.fonts.ready.then'))),c);
+    vm.runInContext(page.slice(page.indexOf('document.fonts.ready.then'), page.indexOf('</script>', page.indexOf('document.fonts.ready.then'))),c);
     const loaded=c.groups(),notice=c.notice();c.submit(text);
     assert.deepEqual(c.groups(),loaded);
     assert.deepEqual(c.notice(),notice);
     // Also exercise a random-example initial load (no URL parameter).
     c.window.location.search='';
-    vm.runInContext(source.slice(source.indexOf('document.fonts.ready.then'), source.indexOf('</script>', source.indexOf('document.fonts.ready.then'))),c);
+    vm.runInContext(page.slice(page.indexOf('document.fonts.ready.then'), page.indexOf('</script>', page.indexOf('document.fonts.ready.then'))),c);
     assert.deepEqual(c.groups(),loaded);
     assert.deepEqual(c.notice(),notice);
   }
