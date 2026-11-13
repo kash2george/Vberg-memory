@@ -1,10 +1,12 @@
-/* VBerg board — the page: camera (pan and zoom), input line, wiring. */
+/* VBerg board — the page: camera (pan and zoom), input line, gestures.
+   Split, layout and drawing are the site's (assets/vberg-engine.js). */
 (function(){
   'use strict';
-  var C = VBoardCore;
+  var C = VBoardCore, Hills = VBoardHills;
   var app = document.getElementById('app');
   var viewport = document.getElementById('viewport');
   var world = document.getElementById('world');
+  var TAP_SLOP = 6;            /* px a pointer may move and still be a tap */
 
   /* ── camera: view only, never stored ── */
   var cam = {x: 0, y: 0, z: 1};
@@ -50,9 +52,46 @@
     if(smooth) glideTo(target); else setCamera(target);
   }
 
-  /* ── pointers: one finger / mouse drag pans, two fingers pinch ── */
+  /* ── hills: the board's time thread, in entry order ── */
+  var focused = null;
+
+  function focusHill(h, smooth){
+    if(focused) focused.el.classList.remove('focused');
+    focused = h;
+    if(h){
+      h.el.classList.add('focused');
+      showPlace(h.index, smooth);
+    }
+  }
+
+  function newId(){
+    if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  function addEntry(text){
+    var h = Hills.create(newId(), text, Hills.all().length, world);
+    focusHill(h, true);
+    return h;
+  }
+
+  /* Remember a regroup of the sentence (boundaries only). The word view is
+     a view: its letters are not stored. */
+  function noteRegroup(h){
+    if(h.word) return;
+    h.splits = h.view.state.splits.slice();
+  }
+
+  function syncTheme(){ document.body.classList.toggle('dark', isDark); }
+
+  /* ── pointers ──
+     One finger / mouse: drag pans. On the focused hill a drag that starts on
+     a word moves that word to a neighbouring group (the site's tryMove), and
+     a tap opens a word or presses one of the hill's own buttons.
+     Two fingers: pinch zoom. */
   var pointers = {};           /* id → last local position */
   var pinch = null;
+  var gesture = null;          /* the single-pointer gesture in progress */
 
   function ids(){ return Object.keys(pointers); }
 
@@ -61,14 +100,41 @@
     pinch = {dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2};
   }
 
+  function dropWordDrag(){
+    if(!gesture || gesture.type !== 'word') return;
+    var h = gesture.hill;
+    Hills.run(h, function(){ drag.active = false; render(); });
+    h.canvas.classList.remove('dragging');
+  }
+
   viewport.addEventListener('pointerdown', function(e){
     if(e.pointerType === 'mouse' && e.button !== 0) return;
-    if(e.target.closest && e.target.closest('#tools')) return;
-    pointers[e.pointerId] = localXY(e);
+    if(e.target.closest('#tools') || e.target.closest('.back')) return;
+    var p = localXY(e);
+    pointers[e.pointerId] = p;
     viewport.setPointerCapture(e.pointerId);
     cancelAnimationFrame(glide);
-    if(ids().length === 2) startPinch();
-    viewport.classList.add('panning');
+
+    if(ids().length === 2){
+      dropWordDrag();
+      gesture = null;
+      startPinch();
+      return;
+    }
+    if(ids().length > 2){ gesture = null; return; }
+
+    var hill = Hills.byElement(e.target);
+    gesture = {type: 'pan', id: e.pointerId, start: p, moved: false, hill: hill, btn: null, box: null};
+    if(hill && hill === focused && e.target === hill.canvas){
+      Hills.run(hill, function(){
+        var q = canvasXY(e);
+        gesture.btn = hitBtn(q.x, q.y);
+        gesture.box = gesture.btn ? null : hitBox(q.x, q.y);
+        gesture.q = q;
+      });
+      if(gesture.box) gesture.type = 'word-pending';
+      else if(gesture.btn) gesture.type = 'button';
+    }
   });
 
   viewport.addEventListener('pointermove', function(e){
@@ -77,15 +143,42 @@
     var p = localXY(e);
     pointers[e.pointerId] = p;
     var n = ids().length;
-    if(n === 1){
-      setCamera({x: cam.x + p.x - last.x, y: cam.y + p.y - last.y, z: cam.z});
-    }else if(n === 2 && pinch){
+
+    if(n === 2 && pinch){
       var k = ids(), a = pointers[k[0]], b = pointers[k[1]];
       var dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       var moved = {x: cam.x + mx - pinch.mx, y: cam.y + my - pinch.my, z: cam.z};
       setCamera(C.zoomAt(moved, mx, my, dist / pinch.dist));
       pinch = {dist: dist, mx: mx, my: my};
+      return;
+    }
+    if(n !== 1 || !gesture || gesture.id !== e.pointerId) return;
+
+    if(!gesture.moved){
+      if(Math.hypot(p.x - gesture.start.x, p.y - gesture.start.y) <= TAP_SLOP) return;
+      gesture.moved = true;
+      last = gesture.start;
+      if(gesture.type === 'button') gesture.type = 'pan';
+      if(gesture.type === 'word-pending'){
+        gesture.type = 'word';
+        var g = gesture;
+        Hills.run(g.hill, function(){
+          drag = {active: true, wi: g.box.wi, mx: g.q.x, my: g.q.y, offX: g.q.x - g.box.x, offY: g.q.y - g.box.y};
+        });
+        g.hill.canvas.classList.add('dragging');
+      }
+      if(gesture.type === 'pan') viewport.classList.add('panning');
+    }
+
+    if(gesture.type === 'word'){
+      Hills.run(gesture.hill, function(){
+        var q = canvasXY(e);
+        drag.mx = q.x; drag.my = q.y;
+        render();
+      });
+    }else{
+      setCamera({x: cam.x + p.x - last.x, y: cam.y + p.y - last.y, z: cam.z});
     }
   });
 
@@ -94,10 +187,50 @@
     delete pointers[e.pointerId];
     pinch = null;
     if(ids().length === 2) startPinch();
-    if(!ids().length) viewport.classList.remove('panning');
+    viewport.classList.remove('panning');
+    var g = gesture;
+    if(!g || g.id !== e.pointerId) return;
+    gesture = null;
+    var cancelled = e.type === 'pointercancel';
+
+    if(g.type === 'word'){
+      /* Same finish as the site's mouseup: the boundary moves, order stays. */
+      Hills.run(g.hill, function(){
+        if(!cancelled){
+          var tg = nearestGroup(drag.mx);
+          if(tg >= 0) tryMove(drag.wi, tg);
+        }
+        drag.active = false;
+        _wordMemory = []; DBG_GROUP_PX = []; DBG_GROUP_OX = [];
+        render();
+      });
+      g.hill.canvas.classList.remove('dragging');
+      noteRegroup(g.hill);
+      return;
+    }
+    if(g.moved || cancelled) return;
+
+    /* a tap */
+    if(g.type === 'button'){
+      Hills.run(g.hill, function(){ doBtn(g.btn.id); });
+      if(g.btn.id === 'groups') noteRegroup(g.hill);
+      else { syncTheme(); Hills.renderAll(false); }
+    }else if(g.type === 'word-pending'){
+      Hills.openWord(g.hill, g.box.wi);
+    }else if(g.hill && g.hill !== focused){
+      focusHill(g.hill, true);
+    }
   }
   viewport.addEventListener('pointerup', endPointer);
   viewport.addEventListener('pointercancel', endPointer);
+
+  /* "‹ sentence" under a hill: back from the word view. */
+  world.addEventListener('click', function(e){
+    var back = e.target.closest('.back');
+    if(!back) return;
+    var h = Hills.byElement(back);
+    if(h) Hills.showSentence(h);
+  });
 
   /* Wheel and trackpad pinch zoom around the cursor. */
   viewport.addEventListener('wheel', function(e){
@@ -119,28 +252,6 @@
   }
   window.addEventListener('resize', fitScreen);
   fitScreen();
-
-  /* ── entries: the board's time thread, in entry order ── */
-  var entries = [];            /* [{text, el}] ; index = order on the thread */
-
-  function addEntry(text){
-    var index = entries.length, place = C.placeOf(index);
-    var el = document.createElement('div');
-    el.className = 'hill';
-    el.style.left = place.x + 'px';
-    el.style.top = place.y + 'px';
-    var slot = document.createElement('div');
-    slot.className = 'slot';
-    var ground = document.createElement('div');
-    ground.className = 'ground';
-    ground.dir = 'auto';
-    ground.textContent = text;
-    el.appendChild(slot);
-    el.appendChild(ground);
-    world.appendChild(el);
-    entries.push({text: text, el: el});
-    showPlace(index, true);
-  }
 
   /* ── input line: grows with the text; Enter draws, Shift+Enter = new line ── */
   var inp = document.getElementById('inp');
@@ -168,14 +279,21 @@
   growInput();
 
   document.getElementById('btnHome').addEventListener('click', function(){
-    showPlace(Math.max(0, entries.length - 1), true);
+    var all = Hills.all();
+    if(all.length) focusHill(all[all.length - 1], true); else showPlace(0, true);
   });
+
+  /* Word widths depend on the font: lay out again once it has arrived. */
+  if(document.fonts && document.fonts.load){
+    document.fonts.load("16px 'Reggae One'").then(function(){ Hills.renderAll(true); }, function(){});
+  }
 
   showPlace(0, false);
 
   window.VBoard = {
     camera: function(){ return {x: cam.x, y: cam.y, z: cam.z}; },
     showPlace: showPlace,
-    entries: function(){ return entries.map(function(e){ return e.text; }); }
+    addEntry: addEntry,
+    focused: function(){ return focused; }
   };
 })();

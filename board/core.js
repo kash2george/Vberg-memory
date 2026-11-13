@@ -49,11 +49,32 @@
     };
   }
 
+  /* Hill shape is never stored (Spec §1). It is recomputed from the node
+     ID, so a hill looks the same after every reload (Spec §13.6 seed). */
+  function seedOf(id){
+    var h = 0x811c9dc5;                          /* FNV-1a, 32 bit */
+    for(var i = 0; i < id.length; i++){
+      h ^= id.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+  }
+  function seededRandom(seed){                   /* mulberry32 */
+    var a = seed >>> 0;
+    return function(){
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
   var api = {
     HILL_W: HILL_W, HILL_H: HILL_H, CAPTION_H: CAPTION_H, ROW_LEN: ROW_LEN,
     ZOOM_MIN: ZOOM_MIN, ZOOM_MAX: ZOOM_MAX,
     clampZoom: clampZoom, zoomAt: zoomAt, toWorld: toWorld,
-    placeOf: placeOf, fitCamera: fitCamera
+    placeOf: placeOf, fitCamera: fitCamera,
+    seedOf: seedOf, seededRandom: seededRandom
   };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.VBoardCore = api;
