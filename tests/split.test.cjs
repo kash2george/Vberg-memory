@@ -96,7 +96,7 @@ test('automatic and fixed G minimize the score within filters, or all candidates
     'Identify, classify, assess, treat and monitor risks in the organisation',
     'Monday Tuesday Wednesday Thursday Friday Saturday Sunday',
     'Vi granskar resultaten, förklarar riskerna och följer planen som fungerar',
-    twenty,twentyOne,
+    twenty,
     ...Array.from({length:19},(_,i)=>Array.from({length:i+2},(_,j)=>'item'+j).join(' '))];
   for(const text of samples){
     const words=text.split(' '), costs=c.sentenceCutCosts(words);
@@ -205,7 +205,7 @@ test('automatic sentence corpus through 20 words has capped groups and no single
   }
 });
 
-test('20 words stay intact as five fours; 21 words fall back with a notice that clears', ()=>{
+test('20 words stay intact as five fours; 21 words split directly with a notice that clears', ()=>{
   const c=app();
   assert.equal(twenty.split(' ').length,20);
   c.submit(twenty);
@@ -214,6 +214,7 @@ test('20 words stay intact as five fours; 21 words fall back with a notice that 
   assert.equal(c.split(twenty.split(' '),true).longSentence,false);
   assert.equal(c.notice().hidden,true);
   c.submit(twentyOne);
+  assert.deepEqual(c.groups().map(g=>g.split(' ').length),[4,4,5,4,4]);
   assert.equal(c.groups().join(' '),twentyOne);
   assert.equal(c.split(twentyOne.split(' '),true).longSentence,true);
   assert.equal(c.notice().textContent,'long sentence: split it into two');
@@ -224,6 +225,41 @@ test('20 words stay intact as five fours; 21 words fall back with a notice that 
     c.submit(twentyOne);c.submit(text);
     assert.equal(c.notice().textContent,'');
     assert.equal(c.notice().hidden,true);
+  }
+});
+
+test('long sentences bypass enumeration and scoring, keeping balanced contiguous groups', ()=>{
+  const c=app();
+  c.allGroupings=()=>{throw Error('long sentence enumerated candidates');};
+  c.sentenceCutCosts=()=>{throw Error('long sentence calculated cut costs');};
+  c.scoreGrouping=()=>{throw Error('long sentence scored candidates');};
+  for(const n of [21,22,23,24,80,150,200]){
+    const words=Array.from({length:n},(_,i)=>'word'+i);
+    for(const G of [undefined,3,4,5]){
+      const result=c.split(words,true,G), sizes=Array.from(result.chunks,g=>g.length);
+      assert.equal(result.G,G||5);
+      assert(Math.max(...sizes)-Math.min(...sizes)<=1);
+      assert.equal(result.longSentence,true);
+      assert.deepEqual(Array.from(result.chunks.flat()),words);
+      assert.deepEqual(c.split(words,true,G),result);
+    }
+  }
+  const words=Array.from({length:150},(_,i)=>'word'+i);
+  assert.deepEqual(Array.from(c.split(words,true,3).chunks,g=>g.length),[50,50,50]);
+  assert.deepEqual(Array.from(c.split(words.slice(0,21),true,4).chunks,g=>g.length),[5,6,5,5]);
+  assert.deepEqual(Array.from(c.split(words.slice(0,23),true).chunks,g=>g.length),[4,5,5,5,4]);
+});
+
+test('80 and 200 word splits each finish in less than 50 ms', ()=>{
+  const c=app();
+  for(const n of [80,200]){
+    const words=Array.from({length:n},(_,i)=>'word'+i);
+    const start=performance.now();
+    const result=c.split(words,true);
+    const elapsed=performance.now()-start;
+    assert(elapsed<50,`${n} words took ${elapsed.toFixed(2)} ms`);
+    assert.equal(result.G,5);
+    assert.deepEqual(Array.from(result.chunks.flat()),words);
   }
 });
 
