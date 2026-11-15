@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+<title>VBerg board (prototype)</title>
+<link href="https://fonts.googleapis.com/css2?family=Reggae+One&display=swap" rel="stylesheet">
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+html, body { height:100%; overflow:hidden; overscroll-behavior:none; }
+body { font-family:'Reggae One',system-ui,sans-serif; background:#eee8da; color:#2a2218; }
+#app { position:fixed; left:0; top:0; width:100%; height:100%; display:flex; flex-direction:column; }
+
+/* ── board ── */
+#viewport {
+  position:relative; flex:1 1 auto; min-height:0; overflow:hidden;
+  touch-action:none; cursor:grab; user-select:none; -webkit-user-select:none;
+  background-image:radial-gradient(rgba(42,34,24,.22) 1px, transparent 1.5px);
+}
+#viewport.panning { cursor:grabbing; }
+#world { position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; will-change:transform; }
+
+/* ── small tools, top right ── */
+#tools { position:absolute; top:8px; right:8px; display:flex; gap:6px; z-index:5; }
+#tools button {
+  min-width:40px; height:40px; padding:0 10px; border:none; border-radius:10px; cursor:pointer;
+  font:15px system-ui,sans-serif; color:inherit; background:rgba(255,255,255,.7);
+  box-shadow:0 1px 4px rgba(0,0,0,.15);
+}
+#tools button[aria-pressed="true"] { background:#2a2218; color:#fdfbf7; }
+#status {
+  position:absolute; top:8px; left:8px; z-index:5; max-width:60%;
+  font:13px/1.4 system-ui,sans-serif; padding:6px 10px; border-radius:8px;
+  background:#2a2218; color:#fdfbf7;
+}
+
+/* ── one hill on the board: its place comes from its order ── */
+.hill { position:absolute; width:680px; }
+.hill canvas { display:block; width:680px; border-radius:10px; }
+.hill.focused canvas { box-shadow:0 0 0 3px rgba(42,34,24,.55); cursor:default; }
+.hill.focused canvas.dragging { cursor:grabbing; }
+.hill .ground { min-height:64px; padding:6px 6px 0; text-align:center; }
+.hill .thread {
+  font-size:20px; line-height:1.35; word-break:break-word; white-space:pre-wrap;
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
+}
+.hill .note { font:13px/1.4 system-ui,sans-serif; opacity:.8; }
+.hill .back {
+  max-width:100%; margin-bottom:2px; padding:3px 10px; border:none; border-radius:8px; cursor:pointer;
+  font:13px/1.4 system-ui,sans-serif; color:inherit; background:rgba(255,255,255,.6);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* ── free drawing: a separate layer above the hills ── */
+#ink { position:absolute; left:0; top:0; width:1px; height:1px; overflow:visible; pointer-events:none; z-index:2; }
+#ink path { fill:none; stroke-linecap:round; stroke-linejoin:round; }
+#ink.hidden { display:none; }
+#viewport.pen { cursor:crosshair; }
+body.dark { color:#d8d2c4; }
+body.dark #viewport { background-image:radial-gradient(rgba(216,210,196,.25) 1px, transparent 1.5px); }
+body.dark .hill.focused canvas { box-shadow:0 0 0 3px rgba(216,210,196,.6); }
+body.dark .hill .back, body.dark #tools button { background:rgba(255,255,255,.14); }
+#sentenceNotice { display:none; }   /* the engine writes its notice here; hills show it */
+
+/* ── input line at the bottom, like a chat window ── */
+#bottom { flex:0 0 auto; background:#d4c9b0; padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }
+#barRow { display:flex; align-items:flex-end; gap:8px; max-width:900px; margin:0 auto; }
+#inp {
+  flex:1 1 auto; min-width:0; resize:none; overflow-y:auto;
+  font:16px/1.4 'Reggae One',system-ui,sans-serif; color:#2a2218; background:#f5f0e8;
+  border:none; border-radius:10px; padding:9px 12px; outline:none;
+  max-height:min(40vh, 9.4em);
+}
+#inp:focus { box-shadow:0 0 0 2px rgba(42,34,24,.25); }
+#send {
+  flex:0 0 auto; width:42px; height:42px; border:none; border-radius:10px; cursor:pointer;
+  font:20px system-ui,sans-serif; background:#2a2218; color:#fdfbf7;
+}
+#send:disabled { opacity:.35; cursor:default; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="viewport">
+    <div id="world">
+      <svg id="ink" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+    </div>
+    <div id="status" role="status" hidden></div>
+    <div id="tools">
+      <button id="btnPen" type="button" aria-pressed="false" title="Draw freely on the board">Pen</button>
+      <button id="btnInk" type="button" aria-pressed="false" title="Hide or show the drawing layer">Hide</button>
+      <button id="btnClear" type="button" title="Remove all drawing">Clear</button>
+      <button id="btnHome" type="button" title="Go to the newest hill" aria-label="Go to the newest hill">⌂</button>
+    </div>
+  </div>
+  <div id="bottom">
+    <div id="barRow">
+      <textarea id="inp" rows="1" dir="auto" spellcheck="false" autocomplete="off"
+                aria-label="Write a sentence or a word"
+                placeholder="Write a sentence or a word"></textarea>
+      <button id="send" type="button" aria-label="Draw it on the board" disabled>↑</button>
+    </div>
+    <div id="sentenceNotice" hidden></div>
+  </div>
+</div>
+<script src="../assets/vberg-engine.js"></script>
+<script src="core.js"></script>
+<script src="hills.js"></script>
+<script src="store.js"></script>
+<script src="commands.js"></script>
+<script src="ink.js"></script>
+<script src="board.js"></script>
+</body>
+</html>
