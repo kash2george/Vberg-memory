@@ -20,7 +20,7 @@ var state  = {words:[],splits:[],G:3,charMode:false};
 var wordBoxes=[], groupCenters=[], groupCircles=[], L={};
 var drag   = {active:false,wi:-1,mx:0,my:0,offX:0,offY:0};
 var isDark=false, noColor=false, memeIdx=-1;
-var PH=7, PV=5;
+var PH=5, PV=5;
 var canvasBtns=[], BTN_R=12, BTN_M=22;
 var HP = {h:2.7, k:0.1, a:2.8};
 var FNT_SPACING = 0.2;
@@ -50,52 +50,7 @@ var DBG_GROUP_OX = [];
 function getGroupMinPX(gi){
   if(DBG_GROUP_PX[gi] !== undefined) return DBG_GROUP_PX[gi];
 
-  /*  AUTO-CALIBRATE Anchor per group */
-  var grps = getGroupArrays();
-  var G = grps.length;
-  var CW = L.CW || 680;
-  var baseFs = Math.max(12, Math.min(18, Math.floor(CW/42)));
-  var fs = Math.round(baseFs * DBG.FNT_CONTENT);
-  var GAP = state.charMode ? 3 : (DBG.COL_MIN_GAP + 4);
-
-  /* measure total width for every group */
-  var groupWidths = [];
-  var totalWidth = 0;
-  offCv.width = CW; offCv.height = 1;
-  ctx_m.font = fs + 'px ' + FONT;
-
-  for(var g = 0; g < G; g++){
-    var arr = grps[g];
-    var w = 0;
-    if(state.charMode){
-      /* charMode: measure as concatenated string + per-char padding */
-      for(var k = 0; k < arr.length; k++){
-        if(arr[k] >= state.words.length) continue;
-        w += ctx_m.measureText(state.words[arr[k]]).width + PH*2;
-        if(k > 0) w += GAP;
-      }
-    } else {
-      for(var k = 0; k < arr.length; k++){
-        if(arr[k] >= state.words.length) continue;
-        w += ctx_m.measureText(state.words[arr[k]]).width + PH*2;
-        if(k > 0) w += GAP;
-      }
-    }
-    groupWidths.push(w);
-    totalWidth += w;
-  }
-
-  if(totalWidth <= 0) return 50;
-
-  var trackWidth = CW * 0.72;
-  var share = trackWidth * (groupWidths[gi] / totalWidth);
-  var anchor = Math.max(20, Math.round(share / 2));
-
-  /* ensure at least enough for the group's total horizontal content */
-  var groupW = groupWidths[gi] || 0;
-  anchor = Math.max(anchor, Math.round(groupW/2 + 8));
-
-  return anchor;
+  return Math.min(48, (L.CW || 680) / (3 * state.G));
 }
 function getGroupOX(gi){
   return (DBG_GROUP_OX[gi] !== undefined) ? DBG_GROUP_OX[gi] : 0;
@@ -103,8 +58,6 @@ function getGroupOX(gi){
 
 var DBG_STEPS = {
   FNT_BOOST:    true,
-  FNT_SHRINK:   true,
-  COL_CIRCLES:  true,
 };
 
 function randomHP(){
@@ -215,451 +168,186 @@ function buildCurve(CX, GY, scale, hPg, aP, CW){
   return pts;
 }
 
-function cvIdxAt(pts, tx){
-  var i = Math.round(tx - pts[0].x);
-  return Math.max(0, Math.min(pts.length-1, i));
+/* Geometry in canvas CSS pixels. L is the padded box height times LINE_PITCH.
+   The track locates groups; text measurement only decides what fits there. */
+var GROUP_LAYOUT = Object.freeze({
+  LINE_PITCH: 1.18, DX_MIN: 1.5, DX_MAX: 4, PEAK_RISE: 3,
+  MIN_FONT: 10, SHRINK_STEP: 0.05, GUTTER: 3
+});
+
+function stackHeight(count, boxHeight){
+  return boxHeight * (1 + (count - 1) * GROUP_LAYOUT.LINE_PITCH);
 }
 
-function cvWalk(pts, i0, px, dir){
-  if(px <= 0) return i0;
-  var walked=0, i=i0;
-  while(walked < px){
-    var next=i+dir;
-    if(next<0||next>=pts.length) break;
-    var dx=pts[next].x-pts[i].x, dy=pts[next].y-pts[i].y;
-    walked+=Math.sqrt(dx*dx+dy*dy);
-    i=next;
-  }
-  return i;
+function layoutHeight(width, groups){
+  var normal = Math.round(width * 0.56);
+  // A narrow hill can give a tall stair extra rows. The board's 680px tile
+  // keeps its normal height, so its next row and caption stay in place.
+  var rows = Math.max.apply(null, groups.map(function(group){ return group.length; }));
+  var minBox = GROUP_LAYOUT.MIN_FONT + PV * 2;
+  var minimum = BTN_M + BTN_R + 16 + stackHeight(rows, minBox);
+  return Math.max(normal, Math.min(Math.ceil(minimum), width, Math.round(680 * 0.56)),
+                  BTN_M + BTN_R + 16 + groups.length * (minBox + GROUP_LAYOUT.GUTTER));
 }
 
-/* ── Main word X/Y computation ─────────────────────── 
-   
-   ARCHITECTURE (rebuilt from scratch):
-   ════════════════════════════════════
-   Every word lives on the TRACK CURVE. Period.
-   
-   1. Build track: array of {x,y} points, 1px horizontal steps
-   2. Place group centers at equal arc-length intervals on track
-   3. Push group centers apart (circle collision on track)
-   4. For each group: find track segment inside circle (by 2D distance)
-   5. Distribute words evenly on that segment
-   6. Each word stores: trkIdx, leftIdx, rightIdx
-   
-   COLLISION (in computeLayout):
-   - Words slide along the track (change trkIdx only)
-   - Words are clamped to their group's [leftIdx, rightIdx]
-   - x,y is ALWAYS read from trk[trkIdx] — never set directly
-   ════════════════════════════════════════════════════════ */
-
-/* helper: update a box's pixel position from its track index */
-function _syncBoxToTrack(box, trk, baseFs, W, CX, GY, scale, aP, CW){
-  var pt = trk[box.trkIdx];
-  box.ax = pt.x;
-  var TOP_CLEAR = BTN_M + BTN_R + 6;
-  box.y = Math.max(4, Math.max(TOP_CLEAR, pt.y - box.h));
-  box.x = Math.max(4, Math.min(CW - 4 - box.w, pt.x - box.w/2));
+function isPeakGroup(gi, count){
+  return (count === 4 && (gi === 1 || gi === 2)) ||
+         ((count === 3 || count === 5) && gi === Math.floor(count / 2));
 }
 
-/* ── Word track memory: stores last good trkIdx per word ── */
-var _wordMemory = [];
-
-function computeWordPositions(W, G, CX, GY, scale, hP, aP, CW){
-  var grps = getGroupArrays();
-  var result = new Array(W);
-
-  /* 1. Build full track */
-  var trk = buildCurve(CX, GY, scale, 0, 0, CW);
-  if(!trk.length){
-    for(var wi=0; wi<W; wi++)
-      result[wi] = {x:CX, y:GY-40, trkIdx:0, leftIdx:0, rightIdx:0};
-    return {pts: result, trk: trk};
+// Keep layer 3's group points at equal arc-length intervals on the track.
+function groupPoints(indices, baseFs){
+  var track = buildCurve(L.CX, L.GY, L.scale, 0, 0, L.CW);
+  var lengths = [0];
+  for(var i = 1; i < track.length; i++){
+    lengths.push(lengths[i-1] + Math.hypot(track[i].x-track[i-1].x, track[i].y-track[i-1].y));
   }
-
-  /* 2. Full track range */
-  var UL = 0;
-  var UR = trk.length - 1;
-
-  /* Arc-length array */
-  var arcLen = [0];
-  for(var i=1; i<=UR; i++){
-    var dx=trk[i].x-trk[i-1].x, dy=trk[i].y-trk[i-1].y;
-    arcLen.push(arcLen[arcLen.length-1]+Math.sqrt(dx*dx+dy*dy));
-  }
-  var totalArc = arcLen[arcLen.length-1]||1;
-
-  /* 3. Place group centers on track by equal arc-length within USABLE range */
-  var gInfo = [];
-  for(var gi=0; gi<G; gi++){
-    var t = G===1 ? 0.5 : gi/(G-1);
-    var target = t * totalArc;
-    var ai = 0;
-    for(var i=0; i<arcLen.length; i++){ if(arcLen[i]>=target){ai=i;break;} }
-    var idx = Math.max(UL, Math.min(UR, UL + ai));
-
-    /* apply OX offset: find nearest track point within usable */
-    var ox = getGroupOX(gi);
-    if(Math.abs(ox) > 0.5){
-      var wantX = trk[idx].x + ox;
-      var best=idx, bestD=Infinity;
-      for(var i=UL;i<=UR;i++){
-        var d=Math.abs(trk[i].x - wantX);
-        if(d<bestD){bestD=d;best=i;}
-      }
-      idx=best;
-    }
-
-    gInfo.push({ci:idx, cx:trk[idx].x, cy:trk[idx].y,
-                R:getGroupMinPX(gi), li:idx, ri:idx});
-  }
-
-  /* 4. Push group centers apart along track (within usable range) */
-  if(DBG_STEPS.COL_CIRCLES){
-    for(var pass=0;pass<20;pass++){
-      var moved=false;
-      for(var gi=0;gi<G-1;gi++){
-        var ga=gInfo[gi], gb=gInfo[gi+1];
-        var dx=trk[gb.ci].x-trk[ga.ci].x;
-        var dy=trk[gb.ci].y-trk[ga.ci].y;
-        var dist=Math.sqrt(dx*dx+dy*dy);
-        var minD=ga.R+gb.R+4;
-        if(dist>0 && dist<minD){
-          var push=Math.ceil((minD-dist)/2);
-          ga.ci=Math.max(UL, ga.ci-push);
-          gb.ci=Math.min(UR, gb.ci+push);
-          ga.cx=trk[ga.ci].x; ga.cy=trk[ga.ci].y;
-          gb.cx=trk[gb.ci].x; gb.cy=trk[gb.ci].y;
-          moved=true;
-        }
-      }
-      if(!moved)break;
-    }
-  }
-
-  /* 5. For each group: find track segment inside circle. */
-  for(var gi=0;gi<G;gi++){
-    var g=gInfo[gi];
-    g.li=g.ci; g.ri=g.ci;
-    for(var i=g.ci;i>=UL;i--){
-      var dx=trk[i].x-g.cx, dy=trk[i].y-g.cy;
-      if(Math.sqrt(dx*dx+dy*dy)>g.R) break;
-      g.li=i;
-    }
-    for(var i=g.ci;i<=UR;i++){
-      var dx=trk[i].x-g.cx, dy=trk[i].y-g.cy;
-      if(Math.sqrt(dx*dx+dy*dy)>g.R) break;
-      g.ri=i;
-    }
-    if(g.li>g.ri) g.li=g.ri=g.ci;
-  }
-
-  /* 5b. Clip overlapping segments between adjacent groups */
-  for(var gi=0;gi<G-1;gi++){
-    var ga=gInfo[gi], gb=gInfo[gi+1];
-    if(ga.ri >= gb.li){
-      var mid = Math.floor((ga.ri + gb.li) / 2);
-      ga.ri = Math.max(ga.li, mid);
-      gb.li = Math.min(gb.ri, mid + 1);
-      if(ga.ci > ga.ri) ga.ci = ga.ri;
-      if(gb.ci < gb.li) gb.ci = gb.li;
-    }
-  }
-
-  /* 6. Distribute words with MEMORY SYSTEM
-        ─────────────────────────────────────
-        Rule: words always stay on the track, near their circle.
-        
-        When circle is big enough → place inside circle (normal)
-        When circle is too small  → use memory BUT pull toward circle center
-        
-        The pull strength = how much the circle shrank.
-        Fully open circle = word at memory position.
-        Tiny circle = word at circle center.
-        This prevents edge groups from having words stuck far away. */
-  for(var gi=0;gi<G;gi++){
-    var arr=grps[gi];
-    if(!arr){arr=[];} /* safety */
-    var n=arr.length, g=gInfo[gi];
-    if(!g) continue; /* safety */
-    var segLen = g.ri - g.li;
-    
-    /* Measure: how much horizontal X-space does the circle segment give? */
-    var segXwidth = (g.ri < trk.length && g.li >= 0) ? 
-                    Math.abs(trk[Math.min(g.ri, trk.length-1)].x - trk[g.li].x) : 0;
-    /* How much X-space do we need for all words? */
-    var neededXwidth = 15 * n;
-    
-    for(var k=0;k<n;k++){
-      var wi = arr[k];
-      
-      /* ideal position inside circle */
-      var t2 = n===1 ? 0.5 : k/(n-1);
-      var idealTi = Math.round(g.li + t2*segLen);
-      idealTi = Math.max(g.li, Math.min(g.ri, idealTi));
-      
-      var mem = (_wordMemory[wi] !== undefined) ? _wordMemory[wi] : -1;
-      
-      var useTi;
-      var useLeft, useRight;
-      
-      if(segXwidth >= neededXwidth || n <= 1){
-        /* ── Circle big enough → normal placement ── */
-        useTi = idealTi;
-        useLeft = g.li;
-        useRight = g.ri;
-        _wordMemory[wi] = useTi;
-      } else if(mem >= 0 && mem < trk.length){
-        /* ── Circle too small, have memory → blend memory toward center ──
-           ratio = 1.0 when circle fits perfectly → use memory as-is
-           ratio = 0.0 when circle is a single point → use circle center
-           In between → linear interpolation */
-        var ratio = (neededXwidth > 0) ? Math.min(1, segXwidth / neededXwidth) : 0;
-        useTi = Math.round(mem * ratio + g.ci * (1 - ratio));
-        useTi = Math.max(0, Math.min(trk.length-1, useTi));
-        /* bounds: between circle and memory, not whole track */
-        useLeft = Math.min(g.li, useTi);
-        useRight = Math.max(g.ri, useTi);
-      } else {
-        /* ── No memory → place at circle center ── */
-        useTi = idealTi;
-        useLeft = g.li;
-        useRight = g.ri;
-        _wordMemory[wi] = useTi;
-      }
-      
-      useTi = Math.max(UL, Math.min(UR, useTi));
-      var pt = trk[useTi];
-      result[wi] = {x:pt.x, y:pt.y, trkIdx:useTi, leftIdx:useLeft, rightIdx:useRight};
-    }
-  }
-
-  /* 7. GLOBAL ORDER: ensure word 0 ≤ word 1 ≤ word 2 ... on track.
-        When groups overlap at small R, initial placement can be crossed. */
-  for(var wi=1; wi<W; wi++){
-    if(!result[wi] || !result[wi-1]) continue;
-    if(result[wi].trkIdx < result[wi-1].trkIdx){
-      /* force this word at least at previous word's position + 1 */
-      var fixed = Math.min(result[wi].rightIdx, result[wi-1].trkIdx + 1);
-      fixed = Math.max(UL, Math.min(UR, fixed));
-      result[wi].trkIdx = fixed;
-      result[wi].x = trk[fixed].x;
-      result[wi].y = trk[fixed].y;
-    }
-  }
-
-  return {pts: result, trk: trk, gInfo: gInfo};
+  var cursor = 0, count = indices.length;
+  var lane = L.CW / count, top = BTN_M + BTN_R + 6, bottom = L.GY - GROUP_LAYOUT.GUTTER;
+  return indices.map(function(words, gi){
+    var fraction = count === 1 ? 0.5 : gi / (count - 1);
+    while(cursor < track.length - 1 && lengths[cursor] < fraction * lengths[lengths.length-1]) cursor++;
+    var anchor = track[cursor] || {x:L.CX, y:L.GY};
+    // Reserve a distinct centre for each group even at the extremes of a drag.
+    var inset = Math.min(lane / 2, L.CW * 0.16);
+    var baseX = Math.max(inset, Math.min(L.CW - inset, anchor.x));
+    var left = (gi + 0.25) * lane, right = (gi + 0.75) * lane;
+    baseX = Math.max(left, Math.min(right, baseX));
+    var x = Math.max(left, Math.min(right, baseX + getGroupOX(gi)));
+    var y = trackY(anchor.x + x - baseX, L.CX, L.GY, L.scale);
+    var half = Math.min((bottom - top) / 2, stackHeight(words.length, baseFs + 2 * PV) / 2);
+    return {gi:gi, cx:x, cy:Math.max(top + half, Math.min(bottom - half, y))};
+  });
 }
 
-/* thin wrapper so old callers still work (returns just the point array) */
-function computeWordX(W, G, CX, GY, scale, hP, aP, CW){
-  var r = computeWordPositions(W, G, CX, GY, scale, hP, aP, CW);
-  return r.pts;
+function boxIntersects(a, b){
+  var gap = GROUP_LAYOUT.GUTTER;
+  return a.x < b.x + b.w + gap && b.x < a.x + a.w + gap &&
+         a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 }
 
-/* ══════════════════════════════════════════════════════
-   LAYOUT — track-index based (rebuilt from scratch)
-   
-   Rule #1: words ALWAYS sit on the track curve
-   Rule #2: collision slides words along track (trkIdx ±)
-   Rule #3: words clamp to group circle bounds [leftIdx..rightIdx]
-   Rule #4: font shrink only if clamped and still overlapping
-   Rule #5: Y-offset only as absolute last resort
-   ══════════════════════════════════════════════════════ */
-function computeLayout(W, CX, GY, scale, hP, aP, baseFs, CW){
-  var MIN_X = 4, MAX_X = CW - 4;
-  var COL_MIN_GAP = DBG.COL_MIN_GAP;
-
-  var data = computeWordPositions(W, state.G, CX, GY, scale, hP, aP, CW);
-  var allPts = data.pts;
-  var trk    = data.trk;
-  var gInfo  = data.gInfo;
-  if(!allPts || !trk.length) return [];
-
-  /* ═══════════════════════════════════════════════════
-     CHAR MODE: each character is a separate box,
-     arranged horizontally within its group.
-     Group sits on track, characters are a flat row.
-     ═══════════════════════════════════════════════════ */
-  if(state.charMode && gInfo){
-    var boxes = [];
-    var grps = getGroupArrays();
-    var CHAR_GAP = 3; /* px between characters */
-
-    for(var gi = 0; gi < grps.length; gi++){
-      var arr = grps[gi];
-      if(!arr.length) continue;
-      var g = gInfo[gi];
-      if(!g) continue;
-
-      /* group anchor point on track */
-      var anchorPt = trk[g.ci] || trk[Math.floor(trk.length/2)];
-      var anchorX = anchorPt.x;
-      var anchorY = anchorPt.y;
-
-      /* font size: based on group position on track — NO isCommon check
-         (single chars like 'a','i','o' must not be shrunk) */
-      var pY    = trackY(anchorX, CX, GY, scale);
-      var peakY = trackY(CX, CX, GY, scale);
-      var heightRatio = Math.max(0, Math.min(1, (GY - pY) / Math.max(1, GY - peakY)));
-      var MAX_BOOST = Math.max(0.4, 1.6 - W * 0.09);
-      var boost = DBG_STEPS.FNT_BOOST ? 1.0 + heightRatio * MAX_BOOST : 1.0;
-      var fs = Math.max(baseFs, Math.round(baseFs * boost * DBG.FNT_CONTENT));
-      var bh = fs + PV*2;
-
-      /* measure all character widths */
-      ctx_m.font = fs + 'px ' + FONT;
-      var charWidths = [];
-      var totalW = 0;
-      for(var k = 0; k < arr.length; k++){
-        var cw = ctx_m.measureText(state.words[arr[k]]).width + PH*2;
-        charWidths.push(cw);
-        totalW += cw;
-        if(k > 0) totalW += CHAR_GAP;
-      }
-
-      /* position: horizontal row centered at anchorX */
-      var TOP_CLEAR = BTN_M + BTN_R + 6;
-      var rowY = Math.max(4, Math.max(TOP_CLEAR, anchorY - bh));
-      var startX = anchorX - totalW/2;
-
-      var cx = startX;
-      for(var k = 0; k < arr.length; k++){
-        var wi = arr[k];
-        var bw = charWidths[k];
-        var bx = Math.max(MIN_X, Math.min(MAX_X - bw, cx));
-
-        boxes[wi] = {
-          wi:wi, x:bx, y:rowY, w:bw, h:bh, gi:gi, fs:fs, ax:anchorX,
-          trkIdx: g.ci, leftIdx: g.li, rightIdx: g.ri
-        };
-        cx += bw + CHAR_GAP;
-      }
+function groupBoxes(group, reduction){
+  var point = group.point;
+  var boxes = group.indices.map(function(wi, i){
+    var fs = Math.max(GROUP_LAYOUT.MIN_FONT, group.fonts[i] * (1 - reduction));
+    ctx_m.font = fs + 'px ' + FONT;
+    var label = state.words[wi];
+    return {wi:wi, gi:point.gi, label:label, fs:fs, w:ctx_m.measureText(label).width + PH * 2};
+  });
+  var n = boxes.length, center = (n - 1) / 2;
+  var height = boxes.reduce(function(tallest, b){ return Math.max(tallest, b.fs); }, 0) + 2 * PV;
+  var pitch = height * GROUP_LAYOUT.LINE_PITCH;
+  var dx = Math.max(GROUP_LAYOUT.DX_MIN, Math.min(GROUP_LAYOUT.DX_MAX, pitch * 0.1));
+  var width = boxes.reduce(function(sum, b){ return sum + b.w; }, (n - 1) * GROUP_LAYOUT.GUTTER);
+  var arc = n > 1 && isPeakGroup(point.gi, state.G) && width <= L.CW / state.G - 2 * GROUP_LAYOUT.GUTTER &&
+            !window.matchMedia('(orientation: portrait)').matches;
+  var left = point.cx - width / 2;
+  var direction = point.gi < state.G / 2 ? -1 : 1;
+  boxes.forEach(function(b, i){
+    b.h = height;
+    b.x = point.cx + (i - center) * dx - b.w / 2;
+    b.y = point.cy + (i - center) * pitch * direction - height / 2;
+    if(arc){
+      b.x = left;
+      b.y = point.cy - height / 2 + (n > 2 ? GROUP_LAYOUT.PEAK_RISE * (Math.abs(i - center) / center - 0.5) : 0);
+      left += b.w + GROUP_LAYOUT.GUTTER;
     }
-    return boxes;
-  }
-
-  /* ═══════════════════════════════════════════════════
-     NORMAL MODE (sentences): words on track
-     ═══════════════════════════════════════════════════ */
-
-  /* ── Step 1: Build boxes at track positions ── */
-  var boxes = new Array(W);
-  for(var wi=0; wi<W; wi++){
-    var pt = allPts[wi];
-    var gi = groupOf(wi);
-    var fs = wordFontSize(wi, W, baseFs, pt.x, CX, GY, scale);
-    var bh = fs + PV*2;
-    ctx_m.font = fs+'px '+FONT;
-    var bw = ctx_m.measureText(state.words[wi]).width + PH*2;
-
-    var TOP_CLEAR = BTN_M + BTN_R + 6;
-    var by = Math.max(4, Math.max(TOP_CLEAR, pt.y - bh));
-    var bx = Math.max(MIN_X, Math.min(MAX_X - bw, pt.x - bw/2));
-
-    boxes[wi] = {
-      wi:wi, x:bx, y:by, w:bw, h:bh, gi:gi, fs:fs, ax:pt.x,
-      trkIdx:   pt.trkIdx,
-      leftIdx:  pt.leftIdx,
-      rightIdx: pt.rightIdx
-    };
-  }
-
-  /* ── Step 2: Slide words along track to resolve overlaps ── */
-  for(var pass=0; pass<80; pass++){
-    var moved = false;
-    /* sort by track index (= left-to-right on curve) */
-    var sorted = boxes.slice().sort(function(a,b){ return a.trkIdx - b.trkIdx; });
-
-    for(var i=0; i<sorted.length; i++){
-      for(var j=i+1; j<sorted.length; j++){
-        var a=sorted[i], b=sorted[j];
-
-        /* early exit if far apart in pixels */
-        if(b.x > a.x + a.w + COL_MIN_GAP + 30) break;
-
-        /* 2D box overlap? */
-        var xOv = b.x < a.x + a.w + COL_MIN_GAP;
-        var yOv = !(a.y + a.h < b.y || b.y + b.h < a.y);
-        if(!xOv || !yOv) continue;
-
-        /* overlap amount in pixels → approximate push in track indices */
-        var overlap = (a.x + a.w + COL_MIN_GAP) - b.x;
-        if(overlap <= 0) continue;
-        var push = Math.ceil(overlap/2) + 1;
-
-        /* push a left, b right — but clamp to group bounds */
-        var newAi = Math.max(a.leftIdx,  a.trkIdx - push);
-        var newBi = Math.min(b.rightIdx, b.trkIdx + push);
-
-        if(newAi !== a.trkIdx){
-          a.trkIdx = newAi;
-          _syncBoxToTrack(a, trk, baseFs, W, CX, GY, scale, aP, CW);
-          moved = true;
-        }
-        if(newBi !== b.trkIdx){
-          b.trkIdx = newBi;
-          _syncBoxToTrack(b, trk, baseFs, W, CX, GY, scale, aP, CW);
-          moved = true;
-        }
-      }
-    }
-
-    /* ── ORDER ENFORCEMENT: words must keep sentence order on track ──
-       word 0 must be left of word 1 which must be left of word 2, etc.
-       If any word crosses its neighbour, push them back to midpoint. */
-    for(var wi=0; wi<W-1; wi++){
-      var cur  = boxes[wi];
-      var next = boxes[wi+1];
-      if(cur.trkIdx >= next.trkIdx){
-        /* crossed! average them and space by 1 */
-        var mid = Math.round((cur.trkIdx + next.trkIdx) / 2);
-        cur.trkIdx  = Math.max(cur.leftIdx,  mid - 1);
-        next.trkIdx = Math.min(next.rightIdx, mid + 1);
-        /* still crossed after clamp? force equal */
-        if(cur.trkIdx >= next.trkIdx){
-          cur.trkIdx = Math.min(cur.trkIdx, next.trkIdx);
-        }
-        _syncBoxToTrack(cur,  trk, baseFs, W, CX, GY, scale, aP, CW);
-        _syncBoxToTrack(next, trk, baseFs, W, CX, GY, scale, aP, CW);
-      }
-    }
-
-    if(!moved) break;
-  }
-
-  /* ── Step 3: Font shrink for words still overlapping (clamped at bounds) ── */
-  if(DBG_STEPS.FNT_SHRINK){
-    for(var pass=0; pass<30; pass++){
-      var changed = false;
-      var sorted = boxes.slice().sort(function(a,b){ return a.x - b.x; });
-      for(var i=0; i<sorted.length-1; i++){
-        var a=sorted[i], b=sorted[i+1];
-        var gap = b.x - (a.x + a.w);
-        var yOv = !(a.y+a.h < b.y || b.y+b.h < a.y);
-        if(gap < COL_MIN_GAP && yOv){
-          /* shrink the content word (not common words) */
-          var tgt = null;
-          if(!isCommon(state.words[b.wi]) && b.fs>10) tgt=b;
-          else if(!isCommon(state.words[a.wi]) && a.fs>10) tgt=a;
-          else if(b.fs>10) tgt=b;
-          else if(a.fs>10) tgt=a;
-          if(tgt){
-            tgt.fs = Math.max(10, tgt.fs-1);
-            ctx_m.font = tgt.fs+'px '+FONT;
-            tgt.w = ctx_m.measureText(state.words[tgt.wi]).width+PH*2;
-            tgt.h = tgt.fs+PV*2;
-            _syncBoxToTrack(tgt, trk, baseFs, W, CX, GY, scale, aP, CW);
-            changed = true;
-          }
-        }
-      }
-      if(!changed) break;
-    }
-  }
-
-  /* ── Step 4: removed — no vertical stacking. Words stay on track. ── */
-
+  });
   return boxes;
+}
+
+function compactBox(group, groups){
+  var point = group.point, indices = group.indices, wi = indices[0];
+  var label = state.words[wi] + (indices.length > 1 ? ' +' + (indices.length - 1) : '');
+  var fs = GROUP_LAYOUT.MIN_FONT, gap = GROUP_LAYOUT.GUTTER, height = fs + PV * 2;
+  ctx_m.font = fs + 'px ' + FONT;
+  var width = Math.min(ctx_m.measureText(label).width + 2 * PH, L.CW - 2 * gap);
+  var top = BTN_M + BTN_R + 6, bottom = L.GY - gap - height;
+  var box = {wi:wi, gi:point.gi, label:label, fs:fs, w:width, h:height,
+             x:Math.max(gap, Math.min(L.CW - gap - width, point.cx - width / 2)),
+             y:Math.max(top, Math.min(bottom, point.cy - height / 2))};
+  // Try the nearest clear row first. A summary can span a lane boundary
+  // without hiding another group that still fits in full.
+  var obstacles = [], candidates = [box.y, top, bottom];
+  groups.forEach(function(other){
+    if(other === group) return;
+    other.boxes.forEach(function(b){
+      if(box.x < b.x + b.w + gap && b.x < box.x + width + gap){
+        obstacles.push(b);
+        candidates.push(b.y - gap - height, b.y + b.h + gap);
+      }
+    });
+  });
+  var preferred = box.y;
+  candidates.sort(function(a,b){ return Math.abs(a-preferred) - Math.abs(b-preferred); });
+  for(var y of candidates){
+    if(y < top || y > bottom) continue;
+    box.y = y;
+    if(!obstacles.some(function(other){ return boxIntersects(box, other); })) return box;
+  }
+  box.y = preferred;
+  return box;
+}
+
+function computeLayout(indices, baseFs){
+  var points = groupPoints(indices, baseFs);
+  var groups = indices.map(function(words, gi){
+    var point = points[gi];
+    var fonts = words.map(function(wi){
+      return Math.max(GROUP_LAYOUT.MIN_FONT, wordFontSize(wi, state.words.length, baseFs, point.cx, L.CX, L.GY, L.scale));
+    });
+    return {point:point, indices:words, fonts:fonts, step:0, compact:false};
+  });
+  var top = BTN_M + BTN_R + 6, gap = GROUP_LAYOUT.GUTTER;
+  groups.forEach(function(group){ group.boxes = groupBoxes(group, 0); });
+  // Only shrink groups that cross a boundary or actually collide. Each pass
+  // either reduces a font, compacts a group, or resolves the last summary rows.
+  for(;;){
+    var onCanvas = [], failed = new Set();
+    groups.forEach(function(group){
+      var outside = group.boxes.some(function(b){
+        return b.x < gap - 0.0001 || b.x + b.w > L.CW - gap + 0.0001 ||
+               b.y < top - 0.0001 || b.y + b.h > L.GY - gap + 0.0001;
+      });
+      if(outside){
+        failed.add(group);
+        return;
+      }
+      onCanvas.forEach(function(other){
+        if(group.boxes.some(function(b){ return other.boxes.some(function(a){ return boxIntersects(a,b); }); })){
+          failed.add(group);
+          failed.add(other);
+        }
+      });
+      onCanvas.push(group);
+    });
+    if(!failed.size) break;
+    var retry = Array.from(failed).filter(function(group){ return !group.compact; });
+    if(!retry.length){
+      // Each summary fits the canvas width. layoutHeight reserves at least
+      // one row per group, so even full-width summaries have a solution.
+      var row = top;
+      groups.forEach(function(group){
+        if(group.compact){
+          group.boxes[0].y = row;
+          row += group.boxes[0].h + gap;
+        }
+      });
+      continue;
+    }
+    var reducible = retry.filter(function(group){ return group.boxes.some(function(b){ return b.fs > GROUP_LAYOUT.MIN_FONT; }); });
+    if(reducible.length){
+      reducible.forEach(function(group){
+        group.boxes = groupBoxes(group, ++group.step * GROUP_LAYOUT.SHRINK_STEP);
+      });
+    }else{
+      // One summary may free its neighbour, so recheck after each collapse.
+      var group = retry.sort(function(a,b){ return b.indices.length - a.indices.length; })[0];
+      group.compact = true;
+      group.boxes = [compactBox(group, groups)];
+    }
+  }
+  return groups;
 }
 
 /* ── off-screen canvas for text measurement ── */
@@ -917,6 +605,15 @@ function updateSentenceNotice(longSentence){
 
 function applySplit(result){
   updateSentenceNotice(result.longSentence);
+  if(state.charMode){
+    // The splitter keeps a short standalone word whole. Longer chunks can
+    // contain several micro-syllables, each with a single draw and drag target.
+    var chunks = result.chunks.map(function(chunk){
+      return result.G === 1 && chunk.length <= 4 ? [chunk] : microSyllables(chunk);
+    });
+    result = {G:result.G, chunks:chunks};
+    state.words = [].concat.apply([], result.chunks);
+  }
   var pos = 0;
   state.G = result.G;
   state.splits = [];
@@ -1003,7 +700,7 @@ function isCommon(word){
 }
 
 function wordFontSize(wi, W, base, ax, CX, GY, scale){
-  if(isCommon(state.words[wi])) return Math.round(base * DBG.FNT_COMMON);
+  if(!state.charMode && isCommon(state.words[wi])) return Math.round(base * DBG.FNT_COMMON);
   var pY    = trackY(ax, CX, GY, scale);
   var peakY = trackY(CX, CX, GY, scale);
   var heightRatio = Math.max(0, Math.min(1, (GY - pY) / Math.max(1, GY - peakY)));
@@ -1027,13 +724,13 @@ function drawBox(x,y,bw,bh,word,col,fs,alpha){
   ctx.save();ctx.globalAlpha=alpha==null?1:alpha;
   if(noColor){
     ctx.font=fs+'px '+FONT;ctx.textAlign='left';ctx.textBaseline='middle';
-    ctx.fillStyle=T.ink;ctx.fillText(word,x+PH,y+bh/2);
+    ctx.fillStyle=T.ink;ctx.fillText(word,x+PH,y+bh/2,bw-2*PH);
   }else{
     rrPath(x,y,bw,bh);ctx.fillStyle=col.f;ctx.fill();
     ctx.strokeStyle=col.s;ctx.lineWidth=1.5;ctx.stroke();
     ctx.fillStyle=col.t;ctx.font=fs+'px '+FONT;
     ctx.textAlign='left';ctx.textBaseline='middle';
-    ctx.fillText(word,x+PH,y+bh/2);
+    ctx.fillText(word,x+PH,y+bh/2,bw-2*PH);
   }
   ctx.restore();
 }
@@ -1077,63 +774,19 @@ var showCollision = false;
 
 function drawGuides(CW, GY, CX, scale, hP, aP){
   if(!showGuides || !state.words.length) return;
-  var G    = state.G;
-  var grps = getGroupArrays();
-
-  if(wordBoxes.length){
-    var P = DBG.BOX_HITPAD;
-    var byX3 = wordBoxes.slice().sort(function(a,b){return a.x-b.x;});
-
-    ctx.save();
-    for(var i=0;i<byX3.length;i++){
-      var b = byX3[i];
-      var col3 = COLS[b.gi%COLS.length].s;
-      ctx.globalAlpha=0.5; ctx.strokeStyle=col3; ctx.lineWidth=1;
-      ctx.setLineDash([3,3]);
-      ctx.strokeRect(b.x-P, b.y-P, b.w+P*2, b.h+P*2);
-      ctx.setLineDash([]);
-      if(i < byX3.length-1){
-        var nb = byX3[i+1];
-        var gapPx = nb.x - (b.x + b.w);
-        var midY  = Math.min(b.y + b.h/2, nb.y + nb.h/2);
-        ctx.globalAlpha = 0.3;
-        ctx.strokeStyle = gapPx < 2 ? '#e05c5c' : '#888';
-        ctx.lineWidth   = 1;
-        ctx.beginPath();
-        ctx.moveTo(b.x + b.w, midY);
-        ctx.lineTo(nb.x, midY);
-        ctx.stroke();
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle   = gapPx < 2 ? '#e05c5c' : '#888';
-        ctx.font        = '9px system-ui';
-        ctx.textAlign   = 'center';
-        ctx.fillText(Math.round(gapPx)+'px', (b.x+b.w+nb.x)/2, midY-4);
-      }
-    }
-    ctx.restore();
-  }
-
-  if(showCollision && wordBoxes.length){
-    var byX4 = wordBoxes.slice().sort(function(a,b){return a.x-b.x;});
-    ctx.save();
-    for(var i=0;i<byX4.length-1;i++){
-      var a4=byX4[i], b4=byX4[i+1];
-      var gap4 = b4.x - (a4.x + a4.w);
-      if(gap4 < 2){
-        ctx.globalAlpha=0.6; ctx.strokeStyle='#e05c5c'; ctx.lineWidth=2;
-        ctx.setLineDash([]);
-        var y4 = Math.min(a4.y, b4.y) - 6;
-        ctx.beginPath();
-        ctx.moveTo(a4.x, y4); ctx.lineTo(a4.x+a4.w, y4);
-        ctx.moveTo(b4.x, y4); ctx.lineTo(b4.x+b4.w, y4);
-        ctx.stroke();
-        ctx.globalAlpha=0.9; ctx.fillStyle='#e05c5c';
-        ctx.font='10px system-ui'; ctx.textAlign='center';
-        ctx.fillText('⚡', (a4.x+a4.w+b4.x)/2, y4);
-      }
-    }
-    ctx.restore();
-  }
+  var pad = DBG.BOX_HITPAD;
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.setLineDash([3,3]);
+  wordBoxes.forEach(function(box){
+    var collision = showCollision && wordBoxes.some(function(other){
+      return box !== other && boxIntersects(box, other);
+    });
+    ctx.strokeStyle = collision ? '#e05c5c' : COLS[box.gi % COLS.length].s;
+    ctx.lineWidth = collision ? 2 : 1;
+    ctx.strokeRect(box.x - pad, box.y - pad, box.w + 2 * pad, box.h + 2 * pad);
+  });
+  ctx.restore();
 
   ctx.save();
   ctx.globalAlpha = 0.4;
@@ -1170,21 +823,9 @@ function drawGuides(CW, GY, CX, scale, hP, aP){
   ctx.setLineDash([]);
   ctx.restore();
 
-  var samplePts2 = buildCurve(CX, GY, scale, 0, 0, CW);
-  var guideLeft  = samplePts2.length ? samplePts2[0].x : 40;
-  var guideRight = samplePts2.length ? samplePts2[samplePts2.length-1].x : CW-40;
-
-  var MARGIN = 40;
-  for(var gi=0; gi<G; gi++){
-    var grp = getGroupArrays()[gi];
-    var n   = grp ? grp.length : 1;
-    var t   = G===1 ? 0.5 : gi/(G-1);
-    var baseCx = guideLeft + t*(guideRight-guideLeft);
-    var cx  = Math.max(guideLeft, Math.min(guideRight, baseCx + getGroupOX(gi)));
-    var cy  = trackY(cx, CX, GY, scale);
-    var R   = getGroupMinPX(gi);
+  for(var gi=0; gi<groupCircles.length; gi++){
+    var circle=groupCircles[gi], cx=circle.cx, cy=circle.cy, R=circle.R;
     var col = COLS[gi%COLS.length].s;
-    if(cy < 4 + R) cy = 4 + R;
 
     ctx.save();
     ctx.globalAlpha = 0.10;
@@ -1237,7 +878,8 @@ function render(){
   var T=isDark?THEMES.dark:THEMES.light;
   var dpr=Math.min(window.devicePixelRatio||1,2);
   var CW=cv.offsetWidth||680;
-  var CH=Math.round(CW*.56);
+  var grps=getGroupArrays();
+  var CH=layoutHeight(CW, grps);
   cv.width=CW*dpr;cv.height=CH*dpr;cv.style.height=CH+'px';
   ctx.scale(dpr,dpr);
   offCv.width=CW;offCv.height=1;
@@ -1259,28 +901,15 @@ function render(){
   ctx.beginPath();ctx.moveTo(0,GY);ctx.lineTo(CW,GY);
   ctx.strokeStyle=T.ink;ctx.lineWidth=2.2;ctx.stroke();
 
-  var W=state.words.length;
   var baseFs=Math.max(12,Math.min(18,Math.floor(CW/42)));
-  var boxes=computeLayout(W,CX,GY,scale,hP,aP,baseFs,CW);
-
+  var groups=computeLayout(grps,baseFs);
   wordBoxes=[];groupCenters=[];groupCircles=[];
-  var grps=getGroupArrays();
-  var posData=computeWordPositions(W,state.G,CX,GY,scale,hP,aP,CW);
-  var allAxesGC=posData.pts;
-  var gInfoRender=posData.gInfo;
-  for(var gi=0;gi<state.G;gi++){
-    var arr=grps[gi];if(!arr||!arr.length)continue;
-    var midWi=arr[Math.floor(arr.length/2)];
-    var pt=allAxesGC&&allAxesGC[midWi]?allAxesGC[midWi]:null;
-    groupCenters.push({gi:gi,px:pt?pt.x:CX});
-    /* store circle info for wheel/middle-click hit testing */
-    if(gInfoRender&&gInfoRender[gi]){
-      var gi2=gInfoRender[gi];
-      var trk2=posData.trk;
-      var cp=trk2&&trk2[gi2.ci]?trk2[gi2.ci]:{x:CX,y:GY/2};
-      groupCircles.push({gi:gi, cx:cp.x, cy:cp.y, R:getGroupMinPX(gi)});
-    }
-  }
+  groups.forEach(function(group){
+    var point=group.point;
+    groupCenters.push({gi:point.gi, px:point.cx});
+    groupCircles.push({gi:point.gi, cx:point.cx, cy:point.cy, R:getGroupMinPX(point.gi)});
+    group.boxes.forEach(function(box){ wordBoxes.push(box); });
+  });
 
   if(drag.active&&!noColor){
     var tg=nearestGroup(drag.mx);
@@ -1289,24 +918,19 @@ function render(){
     }
   }
 
-  for(var wi=0;wi<W;wi++){
-    var box=boxes[wi];
-    if(!box) continue;
-    wordBoxes.push(box);
-    if(!drag.active||drag.wi!==wi)
-      drawBox(box.x,box.y,box.w,box.h,state.words[wi],COLS[box.gi%COLS.length],box.fs,1);
-  }
-
-  drawHillStroke(T,CX,GY,scale,CW);
-
-  if(drag.active){
-    var ref=null;
-    for(var i=0;i<wordBoxes.length;i++)if(wordBoxes[i].wi===drag.wi){ref=wordBoxes[i];break;}
-    if(ref){
-      var gi=groupOf(drag.wi);
-      drawBox(drag.mx-drag.offX,drag.my-drag.offY,ref.w,ref.h,state.words[drag.wi],COLS[gi%COLS.length],ref.fs,0.78);
+  wordBoxes.forEach(function(box){
+    var x=box.x, y=box.y, alpha=1;
+    if(drag.active && drag.wi===box.wi){
+      var ghost={x:drag.mx-drag.offX,y:drag.my-drag.offY,w:box.w,h:box.h};
+      if(ghost.x>=0 && ghost.x+box.w<=CW && ghost.y>=0 && ghost.y+box.h<=GY &&
+         !wordBoxes.some(function(other){ return other!==box && boxIntersects(ghost,other); })){
+        x=ghost.x; y=ghost.y;
+      }
+      alpha=0.78;
     }
-  }
+    drawBox(x,y,box.w,box.h,box.label,COLS[box.gi%COLS.length],box.fs,alpha);
+  });
+  drawHillStroke(T,CX,GY,scale,CW);
 
   drawCanvasButtons(CW);
   drawGuides(CW, GY, CX, scale, hP, aP);
@@ -1350,18 +974,17 @@ function doBtn(id){
   if(id==='dark'){isDark=!isDark;render();}
   else if(id==='color'){noColor=!noColor;render();}
   else if(id==='groups'){
-    var count = state.words.length;
+    var count = state.charMode ? state.words.join('').length : state.words.length;
     var maxG = Math.min(5, count), minG = Math.min(3, count);
     var G = state.G >= maxG ? minG : state.G + 1;
-    randomHP();_wordMemory=[];
+    randomHP();
     if(count){
       var result = state.charMode ? splitSingleWord(state.words.join(''), G) : split(state.words, true, G);
       applySplit(result);
-      if(state.charMode) state.charGroups = result.chunks;
       drag.active=false;render();DBG_GROUP_PX=[];buildGroupPXSliders();
     }else render();
   }
-  else if(id==='meme'){var prev=memeIdx;do{memeIdx=Math.floor(Math.random()*FACES.length);}while(memeIdx===prev&&FACES.length>1);randomHP();_wordMemory=[];if(state.words.length)render();}
+  else if(id==='meme'){var prev=memeIdx;do{memeIdx=Math.floor(Math.random()*FACES.length);}while(memeIdx===prev&&FACES.length>1);randomHP();if(state.words.length)render();}
 }
 
 function setThread(raw){
@@ -1369,26 +992,12 @@ function setThread(raw){
   var parts=raw.split(/\s+/);
   updateSentenceNotice(false);
   drag.active=false;
-  _wordMemory=[];
+  DBG_GROUP_PX=[];
+  DBG_GROUP_OX=[];
   if(parts.length===1){
     var result=splitSingleWord(parts[0]);
-    /* charMode: each character is a separate "word", groups define which chars belong together */
     state.charMode = true;
-    state.charGroups = result.chunks; /* ["com","pu","ter"] for display reference */
-    var allChars = [];
-    var splits = [];
-    var pos = 0;
-    for(var g = 0; g < result.chunks.length; g++){
-      var chunk = result.chunks[g];
-      for(var c = 0; c < chunk.length; c++){
-        allChars.push(chunk[c]);
-      }
-      pos += chunk.length;
-      if(g < result.chunks.length - 1) splits.push(pos);
-    }
-    state.words = allChars;
-    state.G = result.G;
-    state.splits = splits;
+    applySplit(result);
     if(sent) sent.textContent = parts[0];
   }else{
     state.charMode = false;
@@ -1397,7 +1006,5 @@ function setThread(raw){
     applySplit(split(parts, true));
   }
   render();
-  DBG_GROUP_PX=[];
-  DBG_GROUP_OX=[];
   buildGroupPXSliders();
 }

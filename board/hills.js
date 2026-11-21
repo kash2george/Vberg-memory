@@ -29,7 +29,7 @@ var VBoardHills = (function(){
   function freshView(){
     return {
       state: {words: [], splits: [], G: 3, charMode: false},
-      HP: null, wordMemory: [], groupPX: [], groupOX: [],
+      HP: null, groupPX: [], groupOX: [],
       wordBoxes: [], groupCenters: [], groupCircles: [], canvasBtns: [], L: {}
     };
   }
@@ -41,7 +41,7 @@ var VBoardHills = (function(){
     cv = h.canvas; ctx = h.ctx; window._ctx = h.ctx;
     state = v.state;
     if(v.HP) HP = v.HP; else randomHP();
-    _wordMemory = v.wordMemory; DBG_GROUP_PX = v.groupPX; DBG_GROUP_OX = v.groupOX;
+    DBG_GROUP_PX = v.groupPX; DBG_GROUP_OX = v.groupOX;
     wordBoxes = v.wordBoxes; groupCenters = v.groupCenters; groupCircles = v.groupCircles;
     canvasBtns = v.canvasBtns; L = v.L;
   }
@@ -49,7 +49,7 @@ var VBoardHills = (function(){
   function keep(h){
     var v = h.view;
     v.state = state; v.HP = HP;
-    v.wordMemory = _wordMemory; v.groupPX = DBG_GROUP_PX; v.groupOX = DBG_GROUP_OX;
+    v.groupPX = DBG_GROUP_PX; v.groupOX = DBG_GROUP_OX;
     v.wordBoxes = wordBoxes; v.groupCenters = groupCenters; v.groupCircles = groupCircles;
     v.canvasBtns = canvasBtns; v.L = L;
   }
@@ -58,8 +58,7 @@ var VBoardHills = (function(){
     try{ return fn(); } finally { keep(h); }
   }
 
-  /* Draw a thread on a hill with the site's setThread(): one word → letters
-     in syllable groups, several words → the sentence split. */
+  /* Draw a thread on a hill with the site's setThread(): one word → syllables, several words → the sentence split. */
   function setHillThread(h, text){
     h.view = freshView();
     run(h, function(){ setThread(text); });
@@ -78,16 +77,25 @@ var VBoardHills = (function(){
   /* A stored manual regroup: boundaries only, order never changes. */
   function applySplits(h, splits){
     run(h, function(){
-      var W = state.words.length, ok = splits.length >= 1 && splits.length <= 4;
+      var W = state.charMode ? state.words.join('').length : state.words.length, ok = splits.length >= 1 && splits.length <= 4;
       for(var i = 0; ok && i < splits.length; i++){
         if(splits[i] !== Math.floor(splits[i])) ok = false;
         else if(splits[i] < 1 || splits[i] >= W) ok = false;
         else if(i && splits[i] <= splits[i - 1]) ok = false;
       }
       if(!ok) return;
-      state.splits = splits.slice();
-      state.G = splits.length + 1;
-      _wordMemory = []; DBG_GROUP_PX = []; DBG_GROUP_OX = [];
+      if(state.charMode){
+        // Saved single-word boundaries are character offsets, including older boards.
+        var text = state.words.join(''), start = 0;
+        var chunks = splits.concat(W).map(function(end){
+          var chunk = text.slice(start, end); start = end; return chunk;
+        });
+        applySplit({G:chunks.length, chunks:chunks});
+      }else{
+        state.splits = splits.slice();
+        state.G = splits.length + 1;
+      }
+      DBG_GROUP_PX = []; DBG_GROUP_OX = [];
       render();
     });
   }
@@ -140,7 +148,7 @@ var VBoardHills = (function(){
   function renderAll(relayout){
     hills.forEach(function(h){
       run(h, function(){
-        if(relayout){ _wordMemory = []; DBG_GROUP_PX = []; DBG_GROUP_OX = []; }
+        if(relayout){ DBG_GROUP_PX = []; DBG_GROUP_OX = []; }
         render();
       });
     });
