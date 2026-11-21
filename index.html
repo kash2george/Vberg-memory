@@ -223,7 +223,6 @@ window.addEventListener('mouseup',function(){
   if(tg>=0) tryMove(drag.wi,tg);
   drag.active=false;
   cv.classList.remove('dragging');
-  _wordMemory=[];
   DBG_GROUP_PX=[];
   DBG_GROUP_OX=[];
   buildGroupPXSliders();
@@ -261,7 +260,6 @@ cv.addEventListener('wheel', function(e){
   var delta = e.deltaY < 0 ? 5 : -5; /* scroll up = bigger */
   var next = Math.max(10, Math.min(300, current + delta));
   DBG_GROUP_PX[gi] = next;
-  _wordMemory = [];
   render();
   buildGroupPXSliders();
 }, {passive: false});
@@ -286,7 +284,6 @@ window.addEventListener('mousemove', function(e){
   var p = canvasXY(e);
   var dx = p.x - _midDrag.startX;
   DBG_GROUP_OX[_midDrag.gi] = Math.round(_midDrag.startOX + dx);
-  _wordMemory = [];
   render();
   buildGroupPXSliders();
 });
@@ -429,8 +426,6 @@ window.addEventListener('DOMContentLoaded', function(){
 
   var stepDefs = [
     {key:'FNT_BOOST',   label:'Size by Height'},
-    {key:'FNT_SHRINK',  label:'Auto Shrink'},
-    {key:'COL_CIRCLES', label:'Group Push'},
   ];
   stepDefs.forEach(function(d){
     var btn = document.createElement('button');

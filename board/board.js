@@ -90,7 +90,10 @@
      a view: its letters are not stored. */
   function noteRegroup(h){
     if(h.word) return;
-    var splits = h.view.state.splits.slice();
+    var state = h.view.state;
+    var splits = state.splits.map(function(index){
+      return state.charMode ? state.words.slice(0, index).join('').length : index;
+    });
     if(JSON.stringify(splits) === JSON.stringify(h.splits)) return;
     h.splits = splits;
     commands.regroup(h.id, splits).catch(notSaved);
@@ -287,7 +290,7 @@
           if(tg >= 0) tryMove(drag.wi, tg);
         }
         drag.active = false;
-        _wordMemory = []; DBG_GROUP_PX = []; DBG_GROUP_OX = [];
+        DBG_GROUP_PX = []; DBG_GROUP_OX = [];
         render();
       });
       g.hill.canvas.classList.remove('dragging');
